@@ -13,8 +13,8 @@
 | 架構       | 純前端（無需後端伺服器）      |
 | 語言       | HTML + CSS + JavaScript       |
 | 棋盤繪製   | Canvas API                    |
-| AI 引擎    | JavaScript MCTS（蒙地卡羅樹搜索） |
-| 檔案結構   | 單一 `index.html` 檔案       |
+| AI 引擎    | GnuGo 3.9.1（WebAssembly）     |
+| 檔案結構   | `index.html` + `gnugo-loader.js` + `gnugo.wasm` |
 
 ---
 
@@ -64,26 +64,16 @@
 - 新遊戲 / 重新開始功能
 - 遊戲狀態管理
 
-### Phase 3：AI 對弈（MCTS）
+### Phase 3：AI 對弈（GnuGo WASM）
 
-**目標**：實作具業餘初級水準的電腦對手
+**目標**：實作具業餘中級水準的電腦對手
 
-- MCTS 演算法核心實作
-  - Selection（選擇）
-  - Expansion（擴展）
-  - Simulation（模擬）
-  - Backpropagation（反向傳播）
-- UCB1 公式計算節點價值
-- 可調模擬次數（控制 AI 強度）
-- Web Worker 執行避免 UI 凍結
+- GnuGo 3.9.1 編譯為 WebAssembly，瀏覽器端運行
+- 透過 SGF 格式與 GnuGo 通訊
+- 可調 Level 1~10 控制 AI 強度
+- 所有運算在本地完成，無需伺服器
 
-**AI 預估強度**：
-
-| 棋盤大小 | 模擬次數      | 預估強度       |
-| -------- | ------------- | -------------- |
-| 9×9      | 1000 ~ 3000   | 業餘 10-15 級  |
-| 13×13    | 1000 ~ 3000   | 業餘 15-20 級  |
-| 19×19    | 1000 ~ 3000   | 入門級         |
+**AI 預估強度**：約業餘 5-6 kyu（所有棋盤大小一致）
 
 ### Phase 4：輔助功能
 
@@ -136,15 +126,17 @@
 
 ```
 gogame/
-├── PLAN.md        ← 本計畫文件
-└── index.html     ← 所有邏輯、樣式、UI（單檔方案）
+├── PLAN.md          ← 本計畫文件
+├── index.html       ← 遊戲主頁面（邏輯、樣式、UI）
+├── gnugo-loader.js  ← GnuGo WASM 載入器
+└── gnugo.wasm       ← GnuGo 引擎（WebAssembly 二進位）
 ```
 
 ---
 
 ## 注意事項
 
-1. **AI 效能**：MCTS 在 19×19 棋盤上運算量大，需使用 Web Worker 避免主執行緒凍結
+1. **AI 引擎**：GnuGo WASM 約 6.8MB，首次載入需下載，之後瀏覽器會快取
 2. **規則選擇**：預設使用中國規則（數子法），較直觀適合初學者
 3. **瀏覽器相容**：需支援現代瀏覽器（Chrome, Firefox, Safari, Edge）
 4. **儲存**：可考慮使用 LocalStorage 儲存未完成的棋局（選配）

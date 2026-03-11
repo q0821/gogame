@@ -250,6 +250,7 @@ button.danger:hover { background: #a04a4a; }
 </style>
 </head>
 <body>
+<script src="gnugo-loader.js"></script>
 
 <h1>⚫ 圍棋對弈 ⚪</h1>
 
@@ -280,11 +281,11 @@ button.danger:hover { background: #a04a4a; }
       </select>
     </div>
     <div class="control-group" id="aiStrengthGroup">
-      <label>AI 強度</label>
+      <label>AI 強度（GnuGo 等級）</label>
       <select id="aiStrength">
-        <option value="500">初級（500 次模擬）</option>
-        <option value="1500" selected>中級（1500 次模擬）</option>
-        <option value="3000">高級（3000 次模擬）</option>
+        <option value="1">初級（Level 1）</option>
+        <option value="5">中級（Level 5）</option>
+        <option value="10" selected>高級（Level 10）</option>
       </select>
     </div>
 
@@ -415,9 +416,10 @@ let passCount = 0;
 let gameOver = false;
 let gameMode = 'pvc';
 let playerColor = BLACK;
-let aiSimulations = 1500;
+let aiLevel = 10;
 let isAIThinking = false;
-let aiWorker = null;
+let gnugoModule = null;
+let gnugoReady = false;
 
 // Timer
 let timerEnabled = false;
@@ -1021,9 +1023,85 @@ function updateReviewInfo() {
   }
 }
 
-// ==================== AI (MCTS via Web Worker) ====================
-function createAIWorker() {
-  const code = `
+// ==================== AI (GnuGo WASM) ====================
+
+// Convert move history to SGF string for GnuGo
+function buildSGF() {
+  const letters = 'abcdefghijklmnopqrs';
+  let sgf = `(;GM[1]FF[4]SZ[${size}]KM[7.5]`;
+  for (const m of moveHistory) {
+    const color = m.player === BLACK ? 'B' : 'W';
+    if (m.pass) {
+      sgf += `;${color}[]`;
+    } else {
+      sgf += `;${color}[${letters[m.y]}${letters[m.x]}]`;
+    }
+  }
+  sgf += ')';
+  return sgf;
+}
+
+// Parse GnuGo's SGF response to extract the last move
+function parseGnuGoMove(sgfResponse) {
+  const letters = 'abcdefghijklmnopqrs';
+  // Find all move nodes ;B[..] or ;W[..]
+  const movePattern = /;([BW])\[([a-s]{0,2})\]/g;
+  const allMoves = [];
+  let match;
+  while ((match = movePattern.exec(sgfResponse)) !== null) {
+    allMoves.push({ color: match[1], coord: match[2] });
+  }
+
+  if (allMoves.length <= moveHistory.length) {
+    return null; // GnuGo passed or no move found
+  }
+
+  const gnugoMove = allMoves[allMoves.length - 1];
+  if (!gnugoMove.coord || gnugoMove.coord.length < 2) {
+    return null; // Pass
+  }
+
+  const col = letters.indexOf(gnugoMove.coord[0]);
+  const row = letters.indexOf(gnugoMove.coord[1]);
+  if (col < 0 || row < 0 || col >= size || row >= size) return null;
+
+  return [row, col];
+}
+
+// Initialize GnuGo WASM module
+function initGnuGo() {
+  if (gnugoReady) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    setStatus('⏳ 載入 GnuGo AI 引擎...');
+    const Module = {};
+
+    Module.locateFile = function(path) {
+      if (path === 'gnugo.wasm') return 'gnugo.wasm';
+      return path;
+    };
+
+    fetch('gnugo.wasm')
+      .then(response => response.arrayBuffer())
+      .then(bytes => {
+        Module.wasmBinary = new Uint8Array(bytes);
+        GnuGoLoader.init(Module);
+        gnugoModule = Module;
+        gnugoReady = true;
+        console.log('GnuGo WASM loaded');
+        setStatus('GnuGo AI 引擎載入完成！');
+        resolve();
+      })
+      .catch(err => {
+        console.error('Failed to load GnuGo WASM:', err);
+        setStatus('⚠️ AI 引擎載入失敗，請確認 gnugo.wasm 檔案存在');
+        reject(err);
+      });
+  });
+}
+
+/* replaced MCTS code below */
+void(`
 const EMPTY = 0, BLACK = 1, WHITE = 2;
 let N = 19;
 let NN = 361;
@@ -1304,41 +1382,42 @@ self.onmessage = function(e) {
     self.postMessage({ move: null, iters: result.iters });
   }
 };
-`;
-  const blob = new Blob([code], { type: 'application/javascript' });
-  return new Worker(URL.createObjectURL(blob));
-}
-
-// Time limits per board size (ms)
-const AI_TIME_LIMITS = { 9: 3000, 13: 5000, 19: 8000 };
+`);
+/* end replaced MCTS code */
 
 function requestAIMove() {
   if (gameOver || isAIThinking) return;
+  if (!gnugoReady) {
+    initGnuGo().then(() => requestAIMove()).catch(() => {
+      setStatus('⚠️ AI 引擎未就緒');
+      isAIThinking = false;
+    });
+    return;
+  }
+
   isAIThinking = true;
-  setStatus('🤔 AI 思考中...');
+  setStatus('🤔 GnuGo 思考中...');
   updateUI();
 
-  if (aiWorker) aiWorker.terminate();
-  aiWorker = createAIWorker();
+  // Use setTimeout to avoid blocking UI
+  setTimeout(() => {
+    try {
+      const sgf = buildSGF();
+      const result = gnugoModule.ccall('play', 'string', ['number', 'string'], [aiLevel, sgf]);
+      const move = parseGnuGoMove(result);
 
-  aiWorker.onmessage = function(e) {
-    isAIThinking = false;
-    const { move, iters } = e.data;
-    if (move) {
-      placeStone(move[0], move[1]);
-    } else {
-      doPass();
+      isAIThinking = false;
+      if (move) {
+        placeStone(move[0], move[1]);
+      } else {
+        doPass();
+      }
+    } catch (err) {
+      console.error('GnuGo error:', err);
+      isAIThinking = false;
+      setStatus('⚠️ AI 出錯，請重新開始');
     }
-  };
-
-  aiWorker.postMessage({
-    board: board.map(r => [...r]),
-    player: currentPlayer,
-    ko: koPoint,
-    simulations: aiSimulations,
-    size: size,
-    timeLimit: AI_TIME_LIMITS[size] || 5000
-  });
+  }, 50);
 }
 
 // ==================== SOUND ====================
@@ -1386,7 +1465,7 @@ function startNewGame() {
   size = parseInt(document.getElementById('boardSize').value);
   gameMode = document.getElementById('gameMode').value;
   playerColor = parseInt(document.getElementById('playerColor').value);
-  aiSimulations = parseInt(document.getElementById('aiStrength').value);
+  aiLevel = parseInt(document.getElementById('aiStrength').value);
   timerEnabled = document.getElementById('timerToggle').checked;
 
   // Reset state
@@ -1403,7 +1482,6 @@ function startNewGame() {
   isScoring = false;
   deadStones.clear();
   isAIThinking = false;
-  if (aiWorker) { aiWorker.terminate(); aiWorker = null; }
 
   // UI reset
   document.getElementById('scoringPanel').style.display = 'none';
@@ -1423,9 +1501,13 @@ function startNewGame() {
   drawBoard();
   setStatus('遊戲開始！');
 
-  // If AI plays black
-  if (gameMode === 'pvc' && playerColor === WHITE) {
-    setTimeout(() => requestAIMove(), 300);
+  // If PvC mode, preload GnuGo and start if AI plays black
+  if (gameMode === 'pvc') {
+    initGnuGo().then(() => {
+      if (playerColor === WHITE && !gameOver) {
+        setTimeout(() => requestAIMove(), 300);
+      }
+    });
   }
 }
 
