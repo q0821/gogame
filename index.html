@@ -1502,6 +1502,8 @@ function startNewGame() {
   updateUI();
   drawBoard();
   setStatus('遊戲開始！');
+  clearSave();
+  saveGame();
 
   // If PvC mode, preload GnuGo and start if AI plays black
   if (gameMode === 'pvc') {
@@ -1588,8 +1590,122 @@ document.addEventListener('keydown', (e) => {
 // Resize
 window.addEventListener('resize', drawBoard);
 
+// ==================== SAVE / RESTORE ====================
+const SAVE_KEY = 'gogame_state';
+
+function saveGame() {
+  if (isReviewing || isScoring) return;
+  const state = {
+    size, board: board.map(r => [...r]), currentPlayer,
+    captures: { 1: captures[BLACK], 2: captures[WHITE] },
+    moveHistory, koPoint, passCount, gameOver, lastMove,
+    gameMode, playerColor, aiLevel, timerEnabled,
+    timerSeconds: { 1: timerSeconds[BLACK], 2: timerSeconds[WHITE] },
+    boardHistory: boardHistory.map(s => ({
+      board: s.board.map(r => [...r]),
+      captures: { 1: s.captures[BLACK], 2: s.captures[WHITE] },
+      koPoint: s.koPoint, currentPlayer: s.currentPlayer,
+      lastMove: s.lastMove, passCount: s.passCount
+    }))
+  };
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e) {}
+}
+
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const s = JSON.parse(raw);
+    if (!s || !s.board) return false;
+
+    size = s.size;
+    board = s.board.map(r => [...r]);
+    currentPlayer = s.currentPlayer;
+    captures = { [BLACK]: s.captures['1'], [WHITE]: s.captures['2'] };
+    moveHistory = s.moveHistory || [];
+    koPoint = s.koPoint;
+    passCount = s.passCount || 0;
+    gameOver = s.gameOver || false;
+    lastMove = s.lastMove;
+    gameMode = s.gameMode || 'pvp';
+    playerColor = s.playerColor || BLACK;
+    aiLevel = s.aiLevel || 10;
+    timerEnabled = s.timerEnabled || false;
+    timerSeconds = { [BLACK]: s.timerSeconds['1'], [WHITE]: s.timerSeconds['2'] };
+    boardHistory = (s.boardHistory || []).map(h => ({
+      board: h.board.map(r => [...r]),
+      captures: { [BLACK]: h.captures['1'], [WHITE]: h.captures['2'] },
+      koPoint: h.koPoint, currentPlayer: h.currentPlayer,
+      lastMove: h.lastMove, passCount: h.passCount
+    }));
+
+    // Sync UI controls
+    document.getElementById('boardSize').value = size;
+    document.getElementById('gameMode').value = gameMode;
+    document.getElementById('playerColor').value = playerColor;
+    document.getElementById('aiStrength').value = aiLevel;
+    document.getElementById('timerToggle').checked = timerEnabled;
+    document.getElementById('playerColorGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
+    document.getElementById('aiStrengthGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
+    document.getElementById('timerSettings').style.display = timerEnabled ? 'block' : 'none';
+    document.getElementById('timerArea').style.display = timerEnabled ? 'block' : 'none';
+    if (timerEnabled) updateTimerDisplay();
+    if (gameOver && document.getElementById('reviewToggle').checked) {
+      document.getElementById('reviewBtn').style.display = 'block';
+    }
+
+    isReviewing = false;
+    isScoring = false;
+    isAIThinking = false;
+    deadStones.clear();
+
+    updateUI();
+    drawBoard();
+    setStatus(gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
+
+    // Preload GnuGo if needed
+    if (gameMode === 'pvc' && !gameOver) {
+      initGnuGo().then(() => {
+        if (currentPlayer !== playerColor) {
+          setTimeout(() => requestAIMove(), 300);
+        }
+      });
+    }
+    return true;
+  } catch(e) {
+    console.error('Failed to load game:', e);
+    return false;
+  }
+}
+
+function clearSave() {
+  try { localStorage.removeItem(SAVE_KEY); } catch(e) {}
+}
+
+// Auto-save after each move
+const origPlaceStone = placeStone;
+placeStone = function(x, y) {
+  const result = origPlaceStone(x, y);
+  if (result) saveGame();
+  return result;
+};
+
+const origDoPass = doPass;
+doPass = function() {
+  origDoPass();
+  saveGame();
+};
+
+const origDoUndo = doUndo;
+doUndo = function() {
+  origDoUndo();
+  saveGame();
+};
+
 // ==================== INIT ====================
-startNewGame();
+if (!loadGame()) {
+  startNewGame();
+}
 </script>
 </body>
 </html>
