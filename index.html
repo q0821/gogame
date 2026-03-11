@@ -27,16 +27,18 @@ h1 {
   display: flex;
   gap: 20px;
   padding: 10px 20px;
-  max-width: 1200px;
   width: 100%;
   justify-content: center;
-  flex-wrap: wrap;
+  align-items: flex-start;
+  flex-wrap: nowrap;
 }
 .panel {
   background: #16213e;
   border-radius: 12px;
   padding: 16px;
-  min-width: 220px;
+  width: 240px;
+  min-width: 200px;
+  flex-shrink: 0;
 }
 .panel h3 {
   color: #f0d060;
@@ -243,9 +245,9 @@ button.danger:hover { background: #a04a4a; }
 .modal button { margin-top: 16px; }
 
 /* Responsive */
-@media (max-width: 768px) {
-  .game-container { flex-direction: column; align-items: center; }
-  .panel { min-width: unset; width: 100%; max-width: 400px; }
+@media (max-width: 900px) {
+  .game-container { flex-wrap: wrap; }
+  .panel { width: 100%; max-width: 400px; min-width: unset; flex-shrink: 1; }
 }
 </style>
 </head>
