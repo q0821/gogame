@@ -314,6 +314,10 @@ button.danger:hover { background: #a04a4a; }
       <span>覆盤</span>
       <label class="toggle"><input type="checkbox" id="reviewToggle" checked><span class="slider"></span></label>
     </div>
+    <div class="toggle-row">
+      <span>吃子提示</span>
+      <label class="toggle"><input type="checkbox" id="hintToggle"><span class="slider"></span></label>
+    </div>
 
     <button class="primary" onclick="startNewGame()" style="margin-top:12px">🎮 開始新遊戲</button>
   </div>
@@ -603,6 +607,37 @@ function calculateScore(b, dead) {
   };
 }
 
+// ==================== CAPTURE HINTS ====================
+function getCaptureHints(b, player) {
+  const hints = [];
+  const seen = new Set();
+  const opp = opponent(player);
+
+  for (let x = 0; x < size; x++) {
+    for (let y = 0; y < size; y++) {
+      if (b[x][y] !== opp) continue;
+      const group = getGroup(b, x, y);
+      if (group.liberties.size === 1) {
+        // This group has exactly 1 liberty — can be captured!
+        for (const libKey of group.liberties) {
+          const lx = Math.floor(libKey / size);
+          const ly = libKey % size;
+          const key = `${lx},${ly}`;
+          if (!seen.has(key)) {
+            // Verify it's a valid move
+            const result = tryPlaceStone(b, lx, ly, player, koPoint);
+            if (result.valid) {
+              hints.push([lx, ly]);
+              seen.add(key);
+            }
+          }
+        }
+      }
+    }
+  }
+  return hints;
+}
+
 // ==================== RENDERING ====================
 function resizeCanvas() {
   const panelWidth = 260;
@@ -705,6 +740,30 @@ function drawBoard() {
       ctx.beginPath();
       ctx.arc(padding + ly * cellSize, padding + lx * cellSize, cellSize * 0.15, 0, Math.PI * 2);
       ctx.fill();
+    }
+  }
+
+  // Capture hints
+  if (document.getElementById('hintToggle').checked && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
+    const hints = getCaptureHints(displayBoard, currentPlayer);
+    for (const [hx, hy] of hints) {
+      const cx = padding + hy * cellSize;
+      const cy = padding + hx * cellSize;
+      ctx.save();
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, cellSize * 0.38, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Small "!" indicator
+      ctx.fillStyle = '#ff4444';
+      ctx.font = `bold ${Math.max(10, cellSize * 0.35)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', cx, cy);
+      ctx.restore();
     }
   }
 
@@ -1577,6 +1636,8 @@ document.getElementById('timerToggle').addEventListener('change', (e) => {
   document.getElementById('timerSettings').style.display = show ? 'block' : 'none';
   document.getElementById('timerArea').style.display = show ? 'block' : 'none';
 });
+
+document.getElementById('hintToggle').addEventListener('change', () => drawBoard());
 
 // Keyboard shortcuts for review
 document.addEventListener('keydown', (e) => {
