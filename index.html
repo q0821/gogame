@@ -314,9 +314,8 @@ button.danger:hover { background: #a04a4a; }
       <span>覆盤</span>
       <label class="toggle"><input type="checkbox" id="reviewToggle" checked><span class="slider"></span></label>
     </div>
-    <div class="toggle-row">
-      <span>吃子提示</span>
-      <label class="toggle"><input type="checkbox" id="hintToggle"><span class="slider"></span></label>
+    <div class="control-group" style="margin-top:4px">
+      <button onclick="showHintOnce()" id="hintBtn">💡 吃子提示</button>
     </div>
 
     <button class="primary" onclick="startNewGame()" style="margin-top:12px">🎮 開始新遊戲</button>
@@ -439,6 +438,9 @@ let currentReviewMove = 0;
 // Scoring
 let isScoring = false;
 let deadStones = new Set();
+
+// Hint
+let showingHint = false;
 
 // Canvas
 const canvas = document.getElementById('board');
@@ -608,6 +610,19 @@ function calculateScore(b, dead) {
 }
 
 // ==================== CAPTURE HINTS ====================
+function showHintOnce() {
+  if (gameOver || isReviewing || isScoring || isAIThinking) return;
+  showingHint = true;
+  drawBoard();
+}
+
+function clearHint() {
+  if (showingHint) {
+    showingHint = false;
+    drawBoard();
+  }
+}
+
 function getCaptureHints(b, player) {
   const hints = [];
   const seen = new Set();
@@ -744,7 +759,7 @@ function drawBoard() {
   }
 
   // Capture hints
-  if (document.getElementById('hintToggle').checked && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
+  if (showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
     const hints = getCaptureHints(displayBoard, currentPlayer);
     for (const [hx, hy] of hints) {
       const cx = padding + hy * cellSize;
@@ -828,6 +843,8 @@ function placeStone(x, y) {
   const result = tryPlaceStone(board, x, y, currentPlayer, koPoint);
   if (!result.valid) return false;
 
+  showingHint = false;
+
   // Save state for undo
   boardHistory.push({
     board: cloneBoard(board),
@@ -864,6 +881,8 @@ function placeStone(x, y) {
 function doPass() {
   if (gameOver || isReviewing || isScoring || isAIThinking) return;
 
+  showingHint = false;
+
   boardHistory.push({
     board: cloneBoard(board),
     captures: { ...captures },
@@ -896,6 +915,7 @@ function doPass() {
 
 function doUndo() {
   if (gameOver || isReviewing || isScoring) return;
+  showingHint = false;
   if (!document.getElementById('undoToggle').checked) {
     setStatus('悔棋功能已關閉');
     return;
@@ -1636,8 +1656,6 @@ document.getElementById('timerToggle').addEventListener('change', (e) => {
   document.getElementById('timerSettings').style.display = show ? 'block' : 'none';
   document.getElementById('timerArea').style.display = show ? 'block' : 'none';
 });
-
-document.getElementById('hintToggle').addEventListener('change', () => drawBoard());
 
 // Keyboard shortcuts for review
 document.addEventListener('keydown', (e) => {
