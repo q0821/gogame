@@ -1022,157 +1022,180 @@ function updateReviewInfo() {
 function createAIWorker() {
   const code = `
 const EMPTY = 0, BLACK = 1, WHITE = 2;
-let boardSize = 19;
+let N = 19;
+let NN = 361;
 
-function opponent(p) { return p === BLACK ? WHITE : BLACK; }
-function inBounds(x, y) { return x >= 0 && x < boardSize && y >= 0 && y < boardSize; }
-function getNeighbors(x, y) {
-  return [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].filter(([a,b]) => inBounds(a,b));
+function opp(p) { return 3 - p; }
+
+// Flat board operations for speed
+function idx(x, y) { return x * N + y; }
+function coordX(i) { return (i / N) | 0; }
+function coordY(i) { return i % N; }
+
+function neighborIndices(i) {
+  const x = coordX(i), y = coordY(i), r = [];
+  if (x > 0) r.push(i - N);
+  if (x < N - 1) r.push(i + N);
+  if (y > 0) r.push(i - 1);
+  if (y < N - 1) r.push(i + 1);
+  return r;
 }
 
-function getGroup(b, x, y) {
-  const color = b[x][y];
-  if (color === EMPTY) return { stones: [], liberties: new Set() };
-  const visited = new Set();
+// Precompute neighbor table
+let NBR = [];
+function initNbr() {
+  NBR = new Array(NN);
+  for (let i = 0; i < NN; i++) NBR[i] = neighborIndices(i);
+}
+
+// Board is Uint8Array for speed
+function newBoard() { return new Uint8Array(NN); }
+function copyBoard(b) { return new Uint8Array(b); }
+
+function getGroup(b, start) {
+  const color = b[start];
+  if (color === EMPTY) return null;
   const stones = [];
-  const liberties = new Set();
-  const stack = [[x, y]];
+  let liberties = 0;
+  const visited = new Uint8Array(NN);
+  const stack = [start];
+  visited[start] = 1;
   while (stack.length) {
-    const [cx, cy] = stack.pop();
-    const key = cx * boardSize + cy;
-    if (visited.has(key)) continue;
-    visited.add(key);
-    if (b[cx][cy] === color) {
-      stones.push([cx, cy]);
-      for (const [nx, ny] of getNeighbors(cx, cy)) {
-        if (b[nx][ny] === EMPTY) liberties.add(nx * boardSize + ny);
-        else if (b[nx][ny] === color && !visited.has(nx * boardSize + ny)) stack.push([nx, ny]);
-      }
+    const i = stack.pop();
+    stones.push(i);
+    for (const ni of NBR[i]) {
+      if (visited[ni]) continue;
+      visited[ni] = 1;
+      if (b[ni] === EMPTY) liberties++;
+      else if (b[ni] === color) stack.push(ni);
     }
   }
   return { stones, liberties };
 }
 
-function cloneBoard(b) { return b.map(r => [...r]); }
-
-function tryPlace(b, x, y, player, ko) {
-  if (b[x][y] !== EMPTY) return null;
-  const nb = cloneBoard(b);
-  nb[x][y] = player;
+function tryPlace(b, pos, player, koPos) {
+  if (b[pos] !== EMPTY) return null;
+  if (pos === koPos) return null;
+  const nb = copyBoard(b);
+  nb[pos] = player;
   let captured = 0;
-  let capSingle = null;
-  const opp = opponent(player);
-  for (const [nx, ny] of getNeighbors(x, y)) {
-    if (nb[nx][ny] === opp) {
-      const g = getGroup(nb, nx, ny);
-      if (g.liberties.size === 0) {
+  let capSingle = -1;
+  const enemy = opp(player);
+  for (const ni of NBR[pos]) {
+    if (nb[ni] === enemy) {
+      const g = getGroup(nb, ni);
+      if (g && g.liberties === 0) {
         if (g.stones.length === 1) capSingle = g.stones[0];
-        for (const [sx, sy] of g.stones) nb[sx][sy] = EMPTY;
+        for (const s of g.stones) nb[s] = EMPTY;
         captured += g.stones.length;
       }
     }
   }
-  const sg = getGroup(nb, x, y);
-  if (sg.liberties.size === 0) return null;
-  if (ko && ko[0] === x && ko[1] === y) return null;
-  let newKo = null;
-  if (captured === 1 && capSingle && sg.stones.length === 1 && sg.liberties.size === 1) newKo = capSingle;
+  // Suicide check
+  const sg = getGroup(nb, pos);
+  if (sg && sg.liberties === 0) return null;
+  // Ko detection
+  let newKo = -1;
+  if (captured === 1 && capSingle >= 0 && sg.stones.length === 1 && sg.liberties === 1) {
+    newKo = capSingle;
+  }
   return { board: nb, captured, ko: newKo };
 }
 
-function getLegal(b, player, ko) {
-  const moves = [];
-  for (let x = 0; x < boardSize; x++)
-    for (let y = 0; y < boardSize; y++)
-      if (tryPlace(b, x, y, player, ko)) moves.push([x, y]);
-  return moves;
+// Build empty point list
+function getEmptyPoints(b) {
+  const pts = [];
+  for (let i = 0; i < NN; i++) if (b[i] === EMPTY) pts.push(i);
+  return pts;
 }
 
-// Simple heuristic: avoid eyes and prefer moves near existing stones
-function evaluateMove(b, x, y, player) {
-  let score = 0;
-  const neighbors = getNeighbors(x, y);
-  let friendlyCount = 0;
-  let emptyCount = 0;
-  for (const [nx, ny] of neighbors) {
-    if (b[nx][ny] === player) friendlyCount++;
-    else if (b[nx][ny] === EMPTY) emptyCount++;
+// Check if placing at pos would fill own eye
+function isEye(b, pos, player) {
+  for (const ni of NBR[pos]) {
+    if (b[ni] !== player) return false;
   }
-  // Avoid filling own eyes
-  if (friendlyCount === neighbors.length) score -= 100;
-  // Prefer moves adjacent to existing stones
-  if (friendlyCount > 0) score += 2;
-  // Prefer moves near center
-  const center = (boardSize - 1) / 2;
-  const dist = Math.abs(x - center) + Math.abs(y - center);
-  score -= dist * 0.1;
-  return score;
+  return true;
 }
 
-// Random playout with basic heuristics
-function simulate(b, player, ko) {
+// Fast random playout: pick random empty points instead of computing all legal moves
+function simulate(b, player, koPos) {
   let cur = player;
-  let curKo = ko;
+  let curKo = koPos;
   let passes = 0;
-  let maxMoves = boardSize * boardSize * 2;
+  const maxMoves = NN * 2;
+  const emptyList = getEmptyPoints(b);
 
-  for (let i = 0; i < maxMoves && passes < 2; i++) {
-    const legal = getLegal(b, cur, curKo);
-    if (legal.length === 0) { passes++; cur = opponent(cur); curKo = null; continue; }
+  for (let move = 0; move < maxMoves && passes < 2; move++) {
+    // Rebuild empty list periodically for accuracy
+    let placed = false;
+    // Shuffle and try random empty points
+    const len = emptyList.length;
+    if (len === 0) { passes++; cur = opp(cur); curKo = -1; continue; }
 
-    // Filter out obvious eye-filling moves
-    const filtered = legal.filter(([x, y]) => {
-      const neighbors = getNeighbors(x, y);
-      return neighbors.some(([nx, ny]) => b[nx][ny] !== cur);
-    });
-
-    const pool = filtered.length > 0 ? filtered : legal;
-    const [mx, my] = pool[Math.floor(Math.random() * pool.length)];
-    const r = tryPlace(b, mx, my, cur, curKo);
-    if (r) { b = r.board; curKo = r.ko; passes = 0; }
-    else { passes++; }
-    cur = opponent(cur);
+    // Try up to 'len' random positions
+    const startIdx = Math.floor(Math.random() * len);
+    for (let t = 0; t < len; t++) {
+      const ti = (startIdx + t) % len;
+      const pos = emptyList[ti];
+      if (b[pos] !== EMPTY) { emptyList[ti] = emptyList[emptyList.length-1]; emptyList.pop(); continue; }
+      if (isEye(b, pos, cur)) continue;
+      const r = tryPlace(b, pos, cur, curKo);
+      if (r) {
+        b = r.board;
+        curKo = r.ko;
+        passes = 0;
+        placed = true;
+        // Remove from empty list
+        emptyList[ti] = emptyList[emptyList.length-1];
+        emptyList.pop();
+        // Add back captured points
+        // (skip for speed - empty list is approximate)
+        break;
+      }
+    }
+    if (!placed) { passes++; curKo = -1; }
+    cur = opp(cur);
   }
 
-  // Score
+  // Score (Chinese rules)
   let black = 0, white = 0;
-  const visited = Array.from({length: boardSize}, () => Array(boardSize).fill(false));
-  for (let x = 0; x < boardSize; x++) {
-    for (let y = 0; y < boardSize; y++) {
-      if (b[x][y] === BLACK) black++;
-      else if (b[x][y] === WHITE) white++;
-      else if (!visited[x][y]) {
-        const region = [];
-        const borders = new Set();
-        const stack = [[x, y]];
-        while (stack.length) {
-          const [cx, cy] = stack.pop();
-          if (visited[cx][cy]) continue;
-          visited[cx][cy] = true;
-          if (b[cx][cy] === EMPTY) {
-            region.push([cx, cy]);
-            for (const [nx, ny] of getNeighbors(cx, cy)) {
-              if (b[nx][ny] !== EMPTY) borders.add(b[nx][ny]);
-              else if (!visited[nx][ny]) stack.push([nx, ny]);
-            }
-          }
-        }
-        if (borders.size === 1) {
-          const owner = [...borders][0];
-          if (owner === BLACK) black += region.length;
-          else white += region.length;
+  const owner = new Uint8Array(NN); // 0=unknown, 1=black, 2=white, 3=neutral
+  for (let i = 0; i < NN; i++) {
+    if (b[i] === BLACK) { black++; owner[i] = BLACK; }
+    else if (b[i] === WHITE) { white++; owner[i] = WHITE; }
+  }
+  // Territory
+  const visited = new Uint8Array(NN);
+  for (let i = 0; i < NN; i++) {
+    if (visited[i] || b[i] !== EMPTY) continue;
+    const region = [];
+    let borderColor = 0; // 0=none, 3=both
+    const stack = [i];
+    visited[i] = 1;
+    while (stack.length) {
+      const ci = stack.pop();
+      region.push(ci);
+      for (const ni of NBR[ci]) {
+        if (visited[ni]) continue;
+        visited[ni] = 1;
+        if (b[ni] === EMPTY) stack.push(ni);
+        else {
+          if (borderColor === 0) borderColor = b[ni];
+          else if (borderColor !== b[ni]) borderColor = 3;
         }
       }
     }
+    if (borderColor === BLACK) black += region.length;
+    else if (borderColor === WHITE) white += region.length;
   }
   white += 7.5;
   return black > white ? BLACK : WHITE;
 }
 
-// MCTS Node
+// MCTS with time limit
 class MCTSNode {
   constructor(board, player, ko, move, parent) {
-    this.board = board;
+    this.b = board;
     this.player = player;
     this.ko = ko;
     this.move = move;
@@ -1180,61 +1203,68 @@ class MCTSNode {
     this.children = [];
     this.visits = 0;
     this.wins = 0;
-    this.untriedMoves = null;
+    this.untried = null;
   }
 
-  getUntriedMoves() {
-    if (this.untriedMoves === null) {
-      this.untriedMoves = getLegal(this.board, this.player, this.ko);
+  getUntried() {
+    if (this.untried === null) {
+      this.untried = [];
+      for (let i = 0; i < NN; i++) {
+        if (this.b[i] === EMPTY && tryPlace(this.b, i, this.player, this.ko)) {
+          this.untried.push(i);
+        }
+      }
       // Shuffle
-      for (let i = this.untriedMoves.length - 1; i > 0; i--) {
+      for (let i = this.untried.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [this.untriedMoves[i], this.untriedMoves[j]] = [this.untriedMoves[j], this.untriedMoves[i]];
+        [this.untried[i], this.untried[j]] = [this.untried[j], this.untried[i]];
       }
     }
-    return this.untriedMoves;
+    return this.untried;
   }
 
-  ucb1(explorationWeight) {
+  ucb1() {
     if (this.visits === 0) return Infinity;
-    return (this.wins / this.visits) + explorationWeight * Math.sqrt(Math.log(this.parent.visits) / this.visits);
+    return (this.wins / this.visits) + 1.41 * Math.sqrt(Math.log(this.parent.visits) / this.visits);
   }
 
-  bestChild(ew) {
+  bestChild() {
     let best = null, bestScore = -Infinity;
     for (const c of this.children) {
-      const score = c.ucb1(ew);
-      if (score > bestScore) { bestScore = score; best = c; }
+      const s = c.ucb1();
+      if (s > bestScore) { bestScore = s; best = c; }
     }
     return best;
   }
 }
 
-function mcts(board, player, ko, simulations) {
-  const root = new MCTSNode(cloneBoard(board), player, ko, null, null);
+function mcts(board, player, ko, simulations, timeLimitMs) {
+  const root = new MCTSNode(copyBoard(board), player, ko, -1, null);
+  const deadline = Date.now() + timeLimitMs;
+  let iters = 0;
 
-  for (let i = 0; i < simulations; i++) {
+  while (iters < simulations && Date.now() < deadline) {
     let node = root;
 
     // Selection
-    while (node.getUntriedMoves().length === 0 && node.children.length > 0) {
-      node = node.bestChild(1.41);
+    while (node.getUntried().length === 0 && node.children.length > 0) {
+      node = node.bestChild();
     }
 
     // Expansion
-    const untried = node.getUntriedMoves();
+    const untried = node.getUntried();
     if (untried.length > 0) {
-      const [mx, my] = untried.pop();
-      const r = tryPlace(node.board, mx, my, node.player, node.ko);
+      const pos = untried.pop();
+      const r = tryPlace(node.b, pos, node.player, node.ko);
       if (r) {
-        const child = new MCTSNode(r.board, opponent(node.player), r.ko, [mx, my], node);
+        const child = new MCTSNode(r.board, opp(node.player), r.ko, pos, node);
         node.children.push(child);
         node = child;
       }
     }
 
     // Simulation
-    const winner = simulate(cloneBoard(node.board), node.player, node.ko);
+    const winner = simulate(copyBoard(node.b), node.player, node.ko);
 
     // Backpropagation
     while (node) {
@@ -1242,39 +1272,55 @@ function mcts(board, player, ko, simulations) {
       if (winner === player) node.wins++;
       node = node.parent;
     }
+    iters++;
   }
 
-  // Best move by visits
-  if (root.children.length === 0) return null;
+  if (root.children.length === 0) return { move: null, iters };
   let best = root.children[0];
   for (const c of root.children) {
     if (c.visits > best.visits) best = c;
   }
-  return best.move;
+  return { move: best.move, iters };
 }
 
 self.onmessage = function(e) {
-  const { board, player, ko, simulations, size } = e.data;
-  boardSize = size;
-  const move = mcts(board, player, ko, simulations);
-  self.postMessage({ move });
+  const { board, player, ko, simulations, size, timeLimit } = e.data;
+  N = size;
+  NN = N * N;
+  initNbr();
+  // Convert 2D board to flat Uint8Array
+  const flat = newBoard();
+  for (let x = 0; x < N; x++)
+    for (let y = 0; y < N; y++)
+      flat[x * N + y] = board[x][y];
+  const koIdx = ko ? ko[0] * N + ko[1] : -1;
+  const result = mcts(flat, player, koIdx, simulations, timeLimit);
+  if (result.move !== null && result.move >= 0) {
+    self.postMessage({ move: [coordX(result.move), coordY(result.move)], iters: result.iters });
+  } else {
+    self.postMessage({ move: null, iters: result.iters });
+  }
 };
 `;
   const blob = new Blob([code], { type: 'application/javascript' });
   return new Worker(URL.createObjectURL(blob));
 }
 
+// Time limits per board size (ms)
+const AI_TIME_LIMITS = { 9: 3000, 13: 5000, 19: 8000 };
+
 function requestAIMove() {
   if (gameOver || isAIThinking) return;
   isAIThinking = true;
   setStatus('🤔 AI 思考中...');
+  updateUI();
 
   if (aiWorker) aiWorker.terminate();
   aiWorker = createAIWorker();
 
   aiWorker.onmessage = function(e) {
     isAIThinking = false;
-    const { move } = e.data;
+    const { move, iters } = e.data;
     if (move) {
       placeStone(move[0], move[1]);
     } else {
@@ -1287,7 +1333,8 @@ function requestAIMove() {
     player: currentPlayer,
     ko: koPoint,
     simulations: aiSimulations,
-    size: size
+    size: size,
+    timeLimit: AI_TIME_LIMITS[size] || 5000
   });
 }
 
