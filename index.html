@@ -395,6 +395,13 @@ button.danger:hover { background: #a04a4a; }
       </select>
     </div>
     <div class="control-group">
+      <label>比賽規則</label>
+      <select id="gameRules">
+        <option value="chinese" selected>中國規則（數子法）</option>
+        <option value="japanese">日本規則（數目法）</option>
+      </select>
+    </div>
+    <div class="control-group">
       <label>對弈模式</label>
       <select id="gameMode">
         <option value="pvp">人 vs 人</option>
@@ -515,9 +522,9 @@ button.danger:hover { background: #a04a4a; }
     <div class="scoring-panel" id="scoringPanel" style="display:none">
       <h4>📐 數目結果</h4>
       <div class="score-row"><span>⚫ 黑方</span><span id="blackScore">0</span></div>
-      <div class="score-row" style="font-size:12px;color:#8899bb"><span>　棋子+目</span><span id="blackDetail"></span></div>
+      <div class="score-row" style="font-size:12px;color:#8899bb"><span id="blackScoreLabel">　棋子+目</span><span id="blackDetail"></span></div>
       <div class="score-row"><span>⚪ 白方</span><span id="whiteScore">0</span></div>
-      <div class="score-row" style="font-size:12px;color:#8899bb"><span>　棋子+目（含貼目）</span><span id="whiteDetail"></span></div>
+      <div class="score-row" style="font-size:12px;color:#8899bb"><span id="whiteScoreLabel">　棋子+目（含貼目）</span><span id="whiteDetail"></span></div>
       <div class="score-row" style="border-top:1px solid #3a4a6e;padding-top:8px;margin-top:4px">
         <span style="font-weight:bold">結果</span>
         <span style="font-weight:bold;color:#f0d060" id="resultText"></span>
@@ -542,7 +549,8 @@ button.danger:hover { background: #a04a4a; }
 <script>
 // ==================== CONSTANTS ====================
 const EMPTY = 0, BLACK = 1, WHITE = 2;
-const KOMI = 7.5;
+let komi = 7.5;
+let gameRules = 'chinese'; // 'chinese' or 'japanese'
 
 const STAR_POINTS = {
   9:  [[2,2],[2,6],[4,4],[6,2],[6,6]],
@@ -692,12 +700,14 @@ function getLegalMoves(b, player, ko) {
 // ==================== SCORING ====================
 function calculateScore(b, dead) {
   const scored = cloneBoard(b);
+  let deadBlack = 0, deadWhite = 0;
   // Remove dead stones
   for (const key of dead) {
     const x = Math.floor(key / size), y = key % size;
     const color = scored[x][y];
     if (color !== EMPTY) {
-      captures[opponent(color)] += 1; // dead stones count as captures
+      if (color === BLACK) deadBlack++;
+      else deadWhite++;
       scored[x][y] = EMPTY;
     }
   }
@@ -731,7 +741,6 @@ function calculateScore(b, dead) {
     }
   }
 
-  // Count: stones on board + territory (Chinese rules)
   let blackStones = 0, whiteStones = 0, blackTerritory = 0, whiteTerritory = 0;
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
@@ -742,12 +751,25 @@ function calculateScore(b, dead) {
     }
   }
 
-  return {
-    black: blackStones + blackTerritory,
-    white: whiteStones + whiteTerritory + KOMI,
-    blackStones, blackTerritory, whiteStones, whiteTerritory,
-    territory
-  };
+  if (gameRules === 'japanese') {
+    // Japanese: territory + prisoners (captures during game + dead stones)
+    const blackPrisoners = captures[BLACK] + deadWhite;
+    const whitePrisoners = captures[WHITE] + deadBlack;
+    return {
+      black: blackTerritory + blackPrisoners,
+      white: whiteTerritory + whitePrisoners + komi,
+      blackStones: blackPrisoners, blackTerritory, whiteStones: whitePrisoners, whiteTerritory,
+      territory
+    };
+  } else {
+    // Chinese: stones on board + territory
+    return {
+      black: blackStones + blackTerritory,
+      white: whiteStones + whiteTerritory + komi,
+      blackStones, blackTerritory, whiteStones, whiteTerritory,
+      territory
+    };
+  }
 }
 
 // ==================== CAPTURE HINTS ====================
@@ -1107,9 +1129,18 @@ function endGameByScoring() {
 function updateScoringDisplay() {
   const score = calculateScore(board, deadStones);
   document.getElementById('blackScore').textContent = score.black.toFixed(1);
-  document.getElementById('blackDetail').textContent = `${score.blackStones} + ${score.blackTerritory}`;
+  if (gameRules === 'japanese') {
+    document.getElementById('blackScoreLabel').textContent = '　目+提子';
+    document.getElementById('whiteScoreLabel').textContent = '　目+提子（含貼目）';
+    document.getElementById('blackDetail').textContent = `目 ${score.blackTerritory} + 提子 ${score.blackStones}`;
+    document.getElementById('whiteDetail').textContent = `目 ${score.whiteTerritory} + 提子 ${score.whiteStones} + 貼目 ${komi}`;
+  } else {
+    document.getElementById('blackScoreLabel').textContent = '　棋子+目';
+    document.getElementById('whiteScoreLabel').textContent = '　棋子+目（含貼目）';
+    document.getElementById('blackDetail').textContent = `${score.blackStones} + ${score.blackTerritory}`;
+    document.getElementById('whiteDetail').textContent = `${score.whiteStones} + ${score.whiteTerritory} + ${komi}`;
+  }
   document.getElementById('whiteScore').textContent = score.white.toFixed(1);
-  document.getElementById('whiteDetail').textContent = `${score.whiteStones} + ${score.whiteTerritory} + ${KOMI}`;
   const diff = score.black - score.white;
   document.getElementById('resultText').textContent = diff > 0
     ? `⚫ 黑勝 ${diff.toFixed(1)} 目`
@@ -1122,7 +1153,7 @@ function confirmScoring() {
   const score = calculateScore(board, deadStones);
   const diff = score.black - score.white;
   const winner = diff > 0 ? '⚫ 黑方' : '⚪ 白方';
-  const detail = `黑 ${score.black.toFixed(1)} vs 白 ${score.white.toFixed(1)}（含貼目 ${KOMI}）`;
+  const detail = `黑 ${score.black.toFixed(1)} vs 白 ${score.white.toFixed(1)}（含貼目 ${komi}）`;
   isScoring = false;
   document.getElementById('scoringPanel').style.display = 'none';
   endGame(`${winner}勝`, detail);
@@ -1714,6 +1745,8 @@ function startNewGame() {
   playerColor = parseInt(document.getElementById('playerColor').value);
   aiLevel = parseInt(document.getElementById('aiStrength').value);
   timerEnabled = document.getElementById('timerToggle').checked;
+  gameRules = document.getElementById('gameRules').value;
+  komi = gameRules === 'japanese' ? 6.5 : 7.5;
 
   // Reset state
   board = createBoard(size);
@@ -1847,7 +1880,7 @@ function saveGame() {
     size, board: board.map(r => [...r]), currentPlayer,
     captures: { 1: captures[BLACK], 2: captures[WHITE] },
     moveHistory, koPoint, passCount, gameOver, lastMove,
-    gameMode, playerColor, aiLevel, timerEnabled,
+    gameMode, playerColor, aiLevel, timerEnabled, gameRules, komi,
     timerSeconds: { 1: timerSeconds[BLACK], 2: timerSeconds[WHITE] },
     boardHistory: boardHistory.map(s => ({
       board: s.board.map(r => [...r]),
@@ -1879,6 +1912,8 @@ function loadGame() {
     playerColor = s.playerColor || BLACK;
     aiLevel = s.aiLevel || 10;
     timerEnabled = s.timerEnabled || false;
+    gameRules = s.gameRules || 'chinese';
+    komi = s.komi || (gameRules === 'japanese' ? 6.5 : 7.5);
     timerSeconds = { [BLACK]: s.timerSeconds['1'], [WHITE]: s.timerSeconds['2'] };
     boardHistory = (s.boardHistory || []).map(h => ({
       board: h.board.map(r => [...r]),
@@ -1893,6 +1928,7 @@ function loadGame() {
     document.getElementById('playerColor').value = playerColor;
     document.getElementById('aiStrength').value = aiLevel;
     document.getElementById('timerToggle').checked = timerEnabled;
+    document.getElementById('gameRules').value = gameRules;
     document.getElementById('playerColorGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
     document.getElementById('aiStrengthGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
     document.getElementById('timerSettings').style.display = timerEnabled ? 'block' : 'none';

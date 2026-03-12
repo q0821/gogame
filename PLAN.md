@@ -2,7 +2,7 @@
 
 ## 專案概述
 
-純前端網頁圍棋遊戲，支援人 vs 人 / 人 vs 電腦對弈，AI 採用 MCTS（蒙地卡羅樹搜索）演算法，達業餘初級水準，適合初學者練習使用。
+純前端網頁圍棋遊戲，支援人 vs 人 / 人 vs 電腦對弈，以及線上即時多人對戰。AI 採用 MCTS（蒙地卡羅樹搜索）演算法，達業餘初級水準，適合初學者練習使用。線上對戰透過 Firebase Realtime Database 實現，無需自建後端伺服器。
 
 ---
 
@@ -14,6 +14,7 @@
 | 語言       | HTML + CSS + JavaScript       |
 | 棋盤繪製   | Canvas API                    |
 | AI 引擎    | GnuGo 3.9.1（WebAssembly）     |
+| 線上對戰   | Firebase Realtime Database      |
 | 檔案結構   | `index.html` + `gnugo-loader.js` + `gnugo.wasm` |
 
 ---
@@ -27,6 +28,8 @@
 - [x] 圍棋規則引擎（落子、氣的計算、提子、禁著點、劫）
 - [x] 數目功能
 - [x] 勝負判定
+- [ ] 規則選擇（中國規則 / 日本規則）
+- [ ] 線上即時對戰（Firebase Realtime Database）
 
 ### 可開關選項
 
@@ -120,6 +123,58 @@
 - 響應式設計（RWD），支援手機與平板
 - 最後落子標記（小圓點或三角形）
 
+### Phase 8：規則選擇
+
+**目標**：支援中國規則與日本規則
+
+- [ ] 規則選擇 UI（中國規則 / 日本規則）
+- [ ] 中國規則（數子法）：棋子數 + 目數，貼目 7.5
+- [ ] 日本規則（數目法）：僅算目數 + 提子數，貼目 6.5
+- [ ] 根據規則自動調整貼目與計分方式
+- [ ] GnuGo AI 配合規則設定貼目
+
+### Phase 9：線上對戰
+
+**目標**：支援玩家之間的即時線上對弈
+
+#### 技術方案
+- Firebase Realtime Database（免架 Server，前端直連）
+- Firebase `onDisconnect()` 偵測斷線
+
+#### 功能細節
+
+**對戰大廳**
+- 輸入暱稱進入大廳
+- 顯示公開等待中的房間列表
+- 建立房間（選擇棋盤大小、規則、公開/私人）
+- 私人房間產生 4 碼代碼，分享給好友加入
+
+**即時對弈**
+- 落子即時同步（Firebase Realtime）
+- 支援 Pass、認輸、數目
+- 計時器雙方同步
+
+**斷線處理**
+- 對手斷線 → 60 秒等待重連
+- 超時未回 → 可選擇：電腦（GnuGo）接手 / 判定勝利 / 儲存棋局
+- 自己斷線重連 → 從 Firebase 讀取最新狀態恢復
+
+**資料結構**
+```
+/rooms/{roomId}
+  ├── host, guest, status, isPrivate, settings, code, createdAt
+
+/games/{roomId}
+  ├── board, currentPlayer, moves, captures, result
+```
+
+#### 開發子階段
+- Phase 9-1：Firebase 設定 + 暱稱系統
+- Phase 9-2：大廳 UI + 建立/加入房間
+- Phase 9-3：對弈同步核心
+- Phase 9-4：私人房間代碼機制
+- Phase 9-5：斷線處理 + 電腦接手
+
 ---
 
 ## 檔案結構
@@ -128,6 +183,7 @@
 gogame/
 ├── PLAN.md          ← 本計畫文件
 ├── index.html       ← 遊戲主頁面（邏輯、樣式、UI）
+├── lobby.html       ← 線上對戰大廳（Phase 9）
 ├── gnugo-loader.js  ← GnuGo WASM 載入器
 └── gnugo.wasm       ← GnuGo 引擎（WebAssembly 二進位）
 ```
@@ -137,6 +193,9 @@ gogame/
 ## 注意事項
 
 1. **AI 引擎**：GnuGo WASM 約 6.8MB，首次載入需下載，之後瀏覽器會快取
-2. **規則選擇**：預設使用中國規則（數子法），較直觀適合初學者
+2. **規則選擇**：支援中國規則（數子法）與日本規則（數目法），預設中國規則，較直觀適合初學者
 3. **瀏覽器相容**：需支援現代瀏覽器（Chrome, Firefox, Safari, Edge）
 4. **儲存**：可考慮使用 LocalStorage 儲存未完成的棋局（選配）
+5. **Firebase 設定**：需建立 Firebase 專案並啟用 Realtime Database，安全規則須正確設定以防止資料濫用
+6. **線上對戰延遲**：Firebase Realtime Database 延遲通常在 100ms 以內，體驗接近即時
+7. **免費額度**：Firebase 免費方案（Spark Plan）提供 1GB 儲存 + 10GB/月傳輸，足夠小規模使用
