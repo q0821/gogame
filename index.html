@@ -51,6 +51,7 @@ h1 {
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
 }
 canvas {
   cursor: pointer;
@@ -354,6 +355,22 @@ button.danger:hover { background: #a04a4a; }
   min-height: 20px;
 }
 
+/* Guidance tooltip */
+.guidance-tooltip {
+  position: absolute;
+  background: #16213e;
+  color: #f0d060;
+  font-size: 13px;
+  font-weight: bold;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #c0943a;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 50;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   h1 { font-size: 20px; margin: 10px 0 6px; }
@@ -447,6 +464,10 @@ button.danger:hover { background: #a04a4a; }
       <span>覆盤</span>
       <label class="toggle"><input type="checkbox" id="reviewToggle" checked><span class="slider"></span></label>
     </div>
+    <div class="toggle-row">
+      <span>新手引導</span>
+      <label class="toggle"><input type="checkbox" id="guidanceToggle"><span class="slider"></span></label>
+    </div>
     <div class="control-group" style="margin-top:4px">
       <button onclick="showHintOnce()" id="hintBtn">💡 吃子提示</button>
     </div>
@@ -464,6 +485,7 @@ button.danger:hover { background: #a04a4a; }
       <div class="info-item">第 <span id="mobileMoveCount">0</span> 手</div>
     </div>
     <canvas id="board"></canvas>
+    <div class="guidance-tooltip" id="guidanceTooltip" style="display:none"></div>
     <div id="reviewBar" style="display:none; width:100%; max-width:500px; margin-top:6px;">
       <div class="review-controls">
         <button onclick="reviewGo(0)" title="回到開始">⏮</button>
@@ -614,6 +636,12 @@ let deadStones = new Set();
 
 // Hint
 let showingHint = false;
+
+// Beginner Guidance
+let guidanceEnabled = false;
+let guidanceHints = [];       // [{x, y, rank, label}]
+let guidanceTooltip = null;   // {x, y, label} currently showing tooltip
+let guidanceLoading = false;
 
 // Canvas
 const canvas = document.getElementById('board');
@@ -840,6 +868,196 @@ function getCaptureHints(b, player) {
   return hints;
 }
 
+// ==================== BEGINNER GUIDANCE ====================
+function getGamePhase() {
+  const total = moveHistory.length;
+  const threshold = size <= 9 ? 10 : size <= 13 ? 20 : 30;
+  if (total < threshold) return 'opening';
+  if (total < threshold * 3) return 'middle';
+  return 'endgame';
+}
+
+function getGuidanceLabel(x, y, rank, phase) {
+  const isCorner = (r, c) => {
+    const margin = size <= 9 ? 2 : 3;
+    return (r < margin || r >= size - margin) && (c < margin || c >= size - margin);
+  };
+  const isSide = (r, c) => {
+    const margin = size <= 9 ? 2 : 3;
+    return r < margin || r >= size - margin || c < margin || c >= size - margin;
+  };
+
+  if (phase === 'opening') {
+    if (isCorner(x, y)) {
+      const cornerStones = board[x] && board[x][y] === EMPTY;
+      const nearby = getNeighbors(x, y).some(([nx, ny]) => board[nx][ny] !== EMPTY);
+      if (nearby) return '守角';
+      return '佔角';
+    }
+    if (isSide(x, y)) return '拓邊';
+    return '佈局';
+  } else if (phase === 'middle') {
+    // Check if this move would capture
+    const opp = opponent(currentPlayer);
+    for (const [nx, ny] of getNeighbors(x, y)) {
+      if (board[nx][ny] === opp) {
+        const group = getGroup(board, nx, ny);
+        if (group.liberties.size <= 2) return '攻擊';
+      }
+    }
+    // Check if this protects own weak group
+    for (const [nx, ny] of getNeighbors(x, y)) {
+      if (board[nx][ny] === currentPlayer) {
+        const group = getGroup(board, nx, ny);
+        if (group.liberties.size <= 2) return '補強';
+      }
+    }
+    if (isSide(x, y)) return '拓邊';
+    return '中腹';
+  } else {
+    // Endgame
+    if (isSide(x, y)) return '收官';
+    return '收官';
+  }
+}
+
+function requestGuidanceHints() {
+  if (!guidanceEnabled || gameOver || isReviewing || isScoring || isAIThinking) return;
+  if (gameMode === 'pvc' && currentPlayer !== playerColor) return;
+
+  guidanceHints = [];
+  guidanceTooltip = null;
+  hideGuidanceTooltip();
+
+  if (!gnugoReady) {
+    guidanceLoading = true;
+    drawBoard();
+    initGnuGo().then(() => {
+      guidanceLoading = false;
+      if (guidanceEnabled) requestGuidanceHints();
+    }).catch(() => {
+      guidanceLoading = false;
+    });
+    return;
+  }
+
+  guidanceLoading = true;
+  drawBoard();
+
+  setTimeout(() => {
+    try {
+      const phase = getGamePhase();
+      const hints = [];
+      const sgfBase = buildSGF();
+
+      // Get first candidate from GnuGo
+      const result1 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfBase]);
+      const move1 = parseGnuGoMove(result1);
+      if (move1) {
+        const label = getGuidanceLabel(move1[0], move1[1], 0, phase);
+        hints.push({ x: move1[0], y: move1[1], rank: 0, label });
+
+        // Get second candidate: place the first move then ask for next
+        const letters = 'abcdefghijklmnopqrs';
+        const color = currentPlayer === BLACK ? 'B' : 'W';
+        const sgf2Base = sgfBase.slice(0, -1) + `;${color}[${letters[move1[1]]}${letters[move1[0]]}])`;
+        // Ask GnuGo to play the same color again by building SGF where opponent passed
+        const oppColor = currentPlayer === BLACK ? 'W' : 'B';
+        const sgf2 = sgf2Base.slice(0, -1) + `;${oppColor}[];${color}[])`.slice(0, -1);
+        // Simpler approach: build SGF with current move + opponent pass, ask for move
+        const sgfForSecond = buildSGF().slice(0, -1) +
+          `;${color}[${letters[move1[1]]}${letters[move1[0]]}]` +
+          `;${oppColor}[])`;
+        const result2 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfForSecond]);
+        // The response should have moveHistory.length + 2 + 1 moves
+        const movePattern = /;([BW])\[([a-s]{0,2})\]/g;
+        const allMoves2 = [];
+        let match2;
+        while ((match2 = movePattern.exec(result2)) !== null) {
+          allMoves2.push({ color: match2[1], coord: match2[2] });
+        }
+        const expectedCount2 = moveHistory.length + 2;
+        if (allMoves2.length > expectedCount2) {
+          const gm = allMoves2[allMoves2.length - 1];
+          if (gm.coord && gm.coord.length >= 2) {
+            const col = letters.indexOf(gm.coord[0]);
+            const row = letters.indexOf(gm.coord[1]);
+            if (col >= 0 && row >= 0 && col < size && row < size &&
+                (row !== move1[0] || col !== move1[1])) {
+              const label2 = getGuidanceLabel(row, col, 1, phase);
+              hints.push({ x: row, y: col, rank: 1, label: label2 });
+            }
+          }
+        }
+
+        // Get third candidate similarly
+        if (hints.length >= 2) {
+          const m2 = hints[1];
+          const sgfForThird = buildSGF().slice(0, -1) +
+            `;${color}[${letters[move1[1]]}${letters[move1[0]]}]` +
+            `;${oppColor}[]` +
+            `;${color}[${letters[m2.y]}${letters[m2.x]}]` +
+            `;${oppColor}[])`;
+          const result3 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfForThird]);
+          const allMoves3 = [];
+          let match3;
+          const mp3 = /;([BW])\[([a-s]{0,2})\]/g;
+          while ((match3 = mp3.exec(result3)) !== null) {
+            allMoves3.push({ color: match3[1], coord: match3[2] });
+          }
+          const expectedCount3 = moveHistory.length + 4;
+          if (allMoves3.length > expectedCount3) {
+            const gm3 = allMoves3[allMoves3.length - 1];
+            if (gm3.coord && gm3.coord.length >= 2) {
+              const col3 = letters.indexOf(gm3.coord[0]);
+              const row3 = letters.indexOf(gm3.coord[1]);
+              if (col3 >= 0 && row3 >= 0 && col3 < size && row3 < size &&
+                  (row3 !== move1[0] || col3 !== move1[1]) &&
+                  (row3 !== m2.x || col3 !== m2.y)) {
+                const label3 = getGuidanceLabel(row3, col3, 2, phase);
+                hints.push({ x: row3, y: col3, rank: 2, label: label3 });
+              }
+            }
+          }
+        }
+      }
+
+      guidanceHints = hints;
+    } catch (e) {
+      console.error('Guidance hint error:', e);
+      guidanceHints = [];
+    }
+    guidanceLoading = false;
+    drawBoard();
+  }, 10);
+}
+
+function clearGuidance() {
+  guidanceHints = [];
+  guidanceTooltip = null;
+  hideGuidanceTooltip();
+}
+
+function hideGuidanceTooltip() {
+  document.getElementById('guidanceTooltip').style.display = 'none';
+}
+
+function showGuidanceTooltipAt(hint) {
+  const el = document.getElementById('guidanceTooltip');
+  const canvasRect = canvas.getBoundingClientRect();
+  const wrapperRect = canvas.parentElement.getBoundingClientRect();
+  const cx = padding + hint.y * cellSize;
+  const cy = padding + hint.x * cellSize;
+  // Position relative to board-wrapper
+  const left = canvas.offsetLeft + cx;
+  const top = canvas.offsetTop + cy - 30;
+  el.textContent = hint.label;
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+  el.style.transform = 'translateX(-50%)';
+  el.style.display = 'block';
+}
+
 // ==================== RENDERING ====================
 function resizeCanvas() {
   const isMobile = window.innerWidth <= 900;
@@ -1027,6 +1245,50 @@ function drawBoard() {
     }
   }
 
+  // Beginner guidance markers
+  if (guidanceEnabled && !gameOver && !isReviewing && !isScoring) {
+    if (guidanceLoading) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(240,208,96,0.7)';
+      ctx.font = `${Math.max(12, cellSize * 0.4)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🔄 AI 分析中...', canvas.width / 2, canvas.height - 10);
+      ctx.restore();
+    }
+    const rankStyles = [
+      { color: '#ffd700', marker: '⭐', label: '最佳' },
+      { color: '#4a9eff', marker: '🔵', label: '次佳' },
+      { color: '#4caf50', marker: '🟢', label: '可考慮' }
+    ];
+    for (const hint of guidanceHints) {
+      const cx = padding + hint.y * cellSize;
+      const cy = padding + hint.x * cellSize;
+      const style = rankStyles[hint.rank] || rankStyles[2];
+      ctx.save();
+      // Draw glowing circle
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cellSize * 0.4, 0, Math.PI * 2);
+      ctx.stroke();
+      // Fill semi-transparent
+      ctx.fillStyle = style.color;
+      ctx.globalAlpha = 0.15;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cellSize * 0.38, 0, Math.PI * 2);
+      ctx.fill();
+      // Draw marker text
+      ctx.globalAlpha = 1.0;
+      ctx.font = `${Math.max(12, cellSize * 0.4)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(style.marker, cx, cy);
+      ctx.restore();
+    }
+  }
+
   // Hover preview
   if (hoverPos && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
     const [hx, hy] = hoverPos;
@@ -1089,6 +1351,7 @@ function placeStone(x, y) {
   if (!result.valid) return false;
 
   showingHint = false;
+  clearGuidance();
 
   // Save state for undo
   boardHistory.push({
@@ -1120,6 +1383,13 @@ function placeStone(x, y) {
     setTimeout(() => requestAIMove(), 100);
   }
 
+  // Beginner guidance after move
+  if (guidanceEnabled && !gameOver) {
+    if (gameMode !== 'pvc' || currentPlayer === playerColor) {
+      setTimeout(() => requestGuidanceHints(), 150);
+    }
+  }
+
   return true;
 }
 
@@ -1127,6 +1397,7 @@ function doPass() {
   if (gameOver || isReviewing || isScoring || isAIThinking) return;
 
   showingHint = false;
+  clearGuidance();
 
   boardHistory.push({
     board: cloneBoard(board),
@@ -1156,11 +1427,18 @@ function doPass() {
   if (gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver) {
     setTimeout(() => requestAIMove(), 100);
   }
+
+  if (guidanceEnabled && !gameOver) {
+    if (gameMode !== 'pvc' || currentPlayer === playerColor) {
+      setTimeout(() => requestGuidanceHints(), 150);
+    }
+  }
 }
 
 function doUndo() {
   if (gameOver || isReviewing || isScoring) return;
   showingHint = false;
+  clearGuidance();
   if (!document.getElementById('undoToggle').checked) {
     setStatus('悔棋功能已關閉');
     return;
@@ -1182,6 +1460,10 @@ function doUndo() {
   updateUI();
   drawBoard();
   setStatus('已悔棋');
+
+  if (guidanceEnabled && !gameOver) {
+    setTimeout(() => requestGuidanceHints(), 150);
+  }
 }
 
 function doResign() {
@@ -1894,6 +2176,10 @@ function requestAIMove() {
       } else {
         doPass();
       }
+      // Guidance after AI move
+      if (guidanceEnabled && !gameOver && currentPlayer === playerColor) {
+        setTimeout(() => requestGuidanceHints(), 150);
+      }
     } catch (err) {
       console.error('GnuGo error:', err);
       isAIThinking = false;
@@ -1985,6 +2271,11 @@ function startNewGame() {
   isAIThinking = false;
   analysisData = null;
   isAnalyzing = false;
+  guidanceEnabled = document.getElementById('guidanceToggle').checked;
+  guidanceHints = [];
+  guidanceTooltip = null;
+  guidanceLoading = false;
+  hideGuidanceTooltip();
 
   // UI reset
   document.getElementById('scoringPanel').style.display = 'none';
@@ -2015,6 +2306,11 @@ function startNewGame() {
         setTimeout(() => requestAIMove(), 300);
       }
     });
+  }
+
+  // Beginner guidance on game start
+  if (guidanceEnabled) {
+    setTimeout(() => requestGuidanceHints(), 200);
   }
 }
 
@@ -2065,6 +2361,23 @@ canvas.addEventListener('click', (e) => {
     return;
   }
 
+  // Show/hide guidance tooltip when clicking on hint positions
+  if (guidanceEnabled && guidanceHints.length > 0 && board[x][y] === EMPTY) {
+    const hint = guidanceHints.find(h => h.x === x && h.y === y);
+    if (hint) {
+      if (guidanceTooltip && guidanceTooltip.x === x && guidanceTooltip.y === y) {
+        guidanceTooltip = null;
+        hideGuidanceTooltip();
+      } else {
+        guidanceTooltip = hint;
+        showGuidanceTooltipAt(hint);
+      }
+    } else {
+      guidanceTooltip = null;
+      hideGuidanceTooltip();
+    }
+  }
+
   placeStone(x, y);
 });
 
@@ -2073,6 +2386,16 @@ document.getElementById('gameMode').addEventListener('change', (e) => {
   const isPvC = e.target.value === 'pvc';
   document.getElementById('playerColorGroup').style.display = isPvC ? 'block' : 'none';
   document.getElementById('aiStrengthGroup').style.display = isPvC ? 'block' : 'none';
+});
+
+document.getElementById('guidanceToggle').addEventListener('change', (e) => {
+  guidanceEnabled = e.target.checked;
+  if (guidanceEnabled && !gameOver && !isReviewing && !isScoring) {
+    requestGuidanceHints();
+  } else {
+    clearGuidance();
+    drawBoard();
+  }
 });
 
 document.getElementById('timerToggle').addEventListener('change', (e) => {
