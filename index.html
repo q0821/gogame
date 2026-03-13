@@ -516,6 +516,25 @@ button.danger:hover { background: #a04a4a; }
       <button onclick="doResign()" class="danger">🏳️ 認輸</button>
       <button onclick="enterReview()" id="reviewBtn" style="display:none">📖 覆盤</button>
       <button onclick="exitReview()" id="exitReviewBtn" style="display:none">❌ 結束覆盤</button>
+      <button onclick="startAnalysis()" id="analysisBtn" style="display:none">🤖 AI 分析</button>
+    </div>
+    <!-- Analysis panel -->
+    <div id="analysisPanel" style="display:none; margin-top:10px;">
+      <div style="background:#1e2d50;border-radius:8px;padding:12px;">
+        <h4 style="color:#f0d060;margin-bottom:8px;text-align:center">🤖 AI 覆盤分析</h4>
+        <div id="analysisProgressBar" style="display:none;margin-bottom:8px;">
+          <div style="background:#2a3a5e;border-radius:4px;height:8px;overflow:hidden;">
+            <div id="analysisProgressFill" style="background:#c0943a;height:100%;width:0%;transition:width 0.3s;"></div>
+          </div>
+          <div id="analysisProgressText" style="font-size:12px;color:#8899bb;text-align:center;margin-top:4px;">分析中...</div>
+        </div>
+        <div id="analysisSummary" style="display:none;">
+          <div class="score-row"><span>✅ 好手</span><span id="goodCount" style="color:#4caf50">0</span></div>
+          <div class="score-row"><span>⚠️ 疑問手</span><span id="questionCount" style="color:#ff9800">0</span></div>
+          <div class="score-row"><span>❌ 惡手</span><span id="badCount" style="color:#f44336">0</span></div>
+        </div>
+        <div id="analysisMoveInfo" style="display:none;margin-top:8px;font-size:13px;color:#8899bb;text-align:center;"></div>
+      </div>
     </div>
 
     <!-- Scoring Panel -->
@@ -583,6 +602,11 @@ let timerInterval = null;
 // Review
 let isReviewing = false;
 let currentReviewMove = 0;
+
+// AI Analysis
+let analysisData = null;  // array of { move, aiSuggestion, rating }
+let isAnalyzing = false;
+let analysisProgress = 0;
 
 // Scoring
 let isScoring = false;
@@ -929,6 +953,56 @@ function drawBoard() {
     }
   }
 
+  // AI Analysis markers (during review)
+  if (isReviewing && analysisData && !isAnalyzing && currentReviewMove > 0) {
+    const d = analysisData[currentReviewMove - 1];
+    if (d && !d.move.pass) {
+      // Color the current move's marker based on rating
+      const mx = d.move.x, my = d.move.y;
+      const mcx = padding + my * cellSize;
+      const mcy = padding + mx * cellSize;
+      let markerColor = null;
+      let markerLabel = '';
+      if (d.rating === 'good') {
+        markerColor = '#4caf50'; markerLabel = '✓';
+      } else if (d.rating === 'question') {
+        markerColor = '#ff9800'; markerLabel = '?';
+      } else if (d.rating === 'bad') {
+        markerColor = '#f44336'; markerLabel = '✗';
+      }
+      if (markerColor) {
+        ctx.save();
+        ctx.fillStyle = markerColor;
+        ctx.font = `bold ${Math.max(12, cellSize * 0.4)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(markerLabel, mcx, mcy);
+        ctx.restore();
+      }
+
+      // Show AI suggestion if different
+      if (d.aiSuggestion && d.rating !== 'good') {
+        const [ax, ay] = d.aiSuggestion;
+        const acx = padding + ay * cellSize;
+        const acy = padding + ax * cellSize;
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = '#4caf50';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(acx, acy, cellSize * 0.38, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#4caf50';
+        ctx.font = `bold ${Math.max(10, cellSize * 0.3)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('AI', acx, acy);
+        ctx.restore();
+      }
+    }
+  }
+
   // Capture hints
   if (showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
     const hints = getCaptureHints(displayBoard, currentPlayer);
@@ -1235,6 +1309,11 @@ function enterReview() {
   document.getElementById('reviewBar').style.display = 'block';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'block';
+  document.getElementById('analysisBtn').style.display = 'block';
+  if (analysisData) {
+    document.getElementById('analysisPanel').style.display = 'block';
+    document.getElementById('analysisBtn').style.display = 'none';
+  }
   updateReviewInfo();
   drawBoard();
 }
@@ -1243,6 +1322,8 @@ function exitReview() {
   isReviewing = false;
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
+  document.getElementById('analysisBtn').style.display = 'none';
+  document.getElementById('analysisPanel').style.display = 'none';
   if (gameOver) document.getElementById('reviewBtn').style.display = 'block';
   drawBoard();
 }
@@ -1251,6 +1332,7 @@ function reviewGo(n) {
   if (!isReviewing) return;
   currentReviewMove = Math.max(0, Math.min(n, moveHistory.length));
   updateReviewInfo();
+  if (analysisData && !isAnalyzing) updateAnalysisMoveInfo();
   drawBoard();
 }
 
@@ -1284,12 +1366,150 @@ function updateReviewInfo() {
   }
 }
 
+// ==================== AI REVIEW ANALYSIS ====================
+function buildSGFUpTo(n) {
+  const letters = 'abcdefghijklmnopqrs';
+  let sgf = `(;GM[1]FF[4]SZ[${size}]KM[${komi}]`;
+  for (let i = 0; i < n; i++) {
+    const m = moveHistory[i];
+    const color = m.player === BLACK ? 'B' : 'W';
+    if (m.pass) {
+      sgf += `;${color}[]`;
+    } else {
+      sgf += `;${color}[${letters[m.y]}${letters[m.x]}]`;
+    }
+  }
+  sgf += ')';
+  return sgf;
+}
+
+function startAnalysis() {
+  if (isAnalyzing || !gameOver || moveHistory.length === 0) return;
+
+  initGnuGo().then(() => {
+    isAnalyzing = true;
+    analysisData = [];
+    analysisProgress = 0;
+
+    document.getElementById('analysisBtn').style.display = 'none';
+    document.getElementById('analysisPanel').style.display = 'block';
+    document.getElementById('analysisProgressBar').style.display = 'block';
+    document.getElementById('analysisSummary').style.display = 'none';
+    document.getElementById('analysisMoveInfo').style.display = 'none';
+
+    analyzeStep(0);
+  }).catch(() => {
+    setStatus('⚠️ AI 引擎未就緒，無法分析');
+  });
+}
+
+function analyzeStep(moveIndex) {
+  if (moveIndex >= moveHistory.length) {
+    finishAnalysis();
+    return;
+  }
+
+  const m = moveHistory[moveIndex];
+
+  // Skip pass moves
+  if (m.pass) {
+    analysisData.push({ move: m, aiSuggestion: null, rating: 'neutral' });
+    analysisProgress = Math.round(((moveIndex + 1) / moveHistory.length) * 100);
+    updateAnalysisProgress();
+    setTimeout(() => analyzeStep(moveIndex + 1), 10);
+    return;
+  }
+
+  // Build SGF up to this move (not including it), ask GnuGo what it would play
+  const sgf = buildSGFUpTo(moveIndex);
+
+  setTimeout(() => {
+    try {
+      const level = 10; // always use max level for analysis
+      const result = gnugoModule.ccall('play', 'string', ['number', 'string'], [level, sgf]);
+      const aiMove = parseGnuGoMove(result, moveIndex);
+
+      let rating = 'good';
+      if (aiMove) {
+        const dist = Math.abs(aiMove[0] - m.x) + Math.abs(aiMove[1] - m.y);
+        if (dist === 0) {
+          rating = 'good';       // Same as AI
+        } else if (dist <= 3) {
+          rating = 'good';       // Close enough
+        } else if (dist <= 7) {
+          rating = 'question';   // Questionable
+        } else {
+          rating = 'bad';        // Very different
+        }
+      }
+
+      analysisData.push({
+        move: m,
+        aiSuggestion: aiMove,
+        rating: rating
+      });
+    } catch (e) {
+      analysisData.push({ move: m, aiSuggestion: null, rating: 'neutral' });
+    }
+
+    analysisProgress = Math.round(((moveIndex + 1) / moveHistory.length) * 100);
+    updateAnalysisProgress();
+    setTimeout(() => analyzeStep(moveIndex + 1), 10);
+  }, 10);
+}
+
+function updateAnalysisProgress() {
+  document.getElementById('analysisProgressFill').style.width = analysisProgress + '%';
+  document.getElementById('analysisProgressText').textContent =
+    `分析中... ${analysisProgress}%（${analysisData.length} / ${moveHistory.length} 手）`;
+}
+
+function finishAnalysis() {
+  isAnalyzing = false;
+  document.getElementById('analysisProgressBar').style.display = 'none';
+  document.getElementById('analysisSummary').style.display = 'block';
+  document.getElementById('analysisMoveInfo').style.display = 'block';
+
+  let good = 0, question = 0, bad = 0;
+  for (const d of analysisData) {
+    if (d.rating === 'good') good++;
+    else if (d.rating === 'question') question++;
+    else if (d.rating === 'bad') bad++;
+  }
+  document.getElementById('goodCount').textContent = good;
+  document.getElementById('questionCount').textContent = question;
+  document.getElementById('badCount').textContent = bad;
+
+  updateAnalysisMoveInfo();
+  drawBoard();
+}
+
+function updateAnalysisMoveInfo() {
+  const el = document.getElementById('analysisMoveInfo');
+  if (!analysisData || currentReviewMove === 0) {
+    el.textContent = '';
+    return;
+  }
+  const d = analysisData[currentReviewMove - 1];
+  if (!d || d.move.pass) {
+    el.textContent = 'Pass';
+    return;
+  }
+  const letters = 'ABCDEFGHJKLMNOPQRST';
+  const ratingText = d.rating === 'good' ? '✅ 好手' : d.rating === 'question' ? '⚠️ 疑問手' : d.rating === 'bad' ? '❌ 惡手' : '';
+  let text = `${ratingText}`;
+  if (d.aiSuggestion && d.rating !== 'good') {
+    text += `　AI 建議：${letters[d.aiSuggestion[1]]}${size - d.aiSuggestion[0]}`;
+  }
+  el.textContent = text;
+}
+
 // ==================== AI (GnuGo WASM) ====================
 
 // Convert move history to SGF string for GnuGo
 function buildSGF() {
   const letters = 'abcdefghijklmnopqrs';
-  let sgf = `(;GM[1]FF[4]SZ[${size}]KM[7.5]`;
+  let sgf = `(;GM[1]FF[4]SZ[${size}]KM[${komi}]`;
   for (const m of moveHistory) {
     const color = m.player === BLACK ? 'B' : 'W';
     if (m.pass) {
@@ -1303,7 +1523,8 @@ function buildSGF() {
 }
 
 // Parse GnuGo's SGF response to extract the last move
-function parseGnuGoMove(sgfResponse) {
+function parseGnuGoMove(sgfResponse, expectedMoveCount) {
+  const expected = expectedMoveCount !== undefined ? expectedMoveCount : moveHistory.length;
   const letters = 'abcdefghijklmnopqrs';
   // Find all move nodes ;B[..] or ;W[..]
   const movePattern = /;([BW])\[([a-s]{0,2})\]/g;
@@ -1313,7 +1534,7 @@ function parseGnuGoMove(sgfResponse) {
     allMoves.push({ color: match[1], coord: match[2] });
   }
 
-  if (allMoves.length <= moveHistory.length) {
+  if (allMoves.length <= expected) {
     return null; // GnuGo passed or no move found
   }
 
@@ -1762,12 +1983,16 @@ function startNewGame() {
   isScoring = false;
   deadStones.clear();
   isAIThinking = false;
+  analysisData = null;
+  isAnalyzing = false;
 
   // UI reset
   document.getElementById('scoringPanel').style.display = 'none';
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
+  document.getElementById('analysisBtn').style.display = 'none';
+  document.getElementById('analysisPanel').style.display = 'none';
   document.getElementById('resultModal').classList.remove('show');
 
   // Timer
