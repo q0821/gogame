@@ -1,0 +1,22 @@
+{
+  "name": "圍棋對弈",
+  "short_name": "圍棋",
+  "description": "網頁圍棋遊戲，支援人 vs 人、人 vs AI 對弈",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
