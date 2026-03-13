@@ -1044,14 +1044,12 @@ function hideGuidanceTooltip() {
 
 function showGuidanceTooltipAt(hint) {
   const el = document.getElementById('guidanceTooltip');
-  const canvasRect = canvas.getBoundingClientRect();
-  const wrapperRect = canvas.parentElement.getBoundingClientRect();
+  const rankNames = ['⭐ 最佳', '🔵 次佳', '🟢 可考慮'];
   const cx = padding + hint.y * cellSize;
   const cy = padding + hint.x * cellSize;
-  // Position relative to board-wrapper
   const left = canvas.offsetLeft + cx;
-  const top = canvas.offsetTop + cy - 30;
-  el.textContent = hint.label;
+  const top = canvas.offsetTop + cy - 35;
+  el.textContent = `${rankNames[hint.rank] || ''} — ${hint.label}（點擊落子）`;
   el.style.left = left + 'px';
   el.style.top = top + 'px';
   el.style.transform = 'translateX(-50%)';
@@ -1257,9 +1255,9 @@ function drawBoard() {
       ctx.restore();
     }
     const rankStyles = [
-      { color: '#ffd700', marker: '⭐', label: '最佳' },
-      { color: '#4a9eff', marker: '🔵', label: '次佳' },
-      { color: '#4caf50', marker: '🟢', label: '可考慮' }
+      { color: '#ffd700', marker: '⭐', rankLabel: '最佳' },
+      { color: '#4a9eff', marker: '🔵', rankLabel: '次佳' },
+      { color: '#4caf50', marker: '🟢', rankLabel: '可考慮' }
     ];
     for (const hint of guidanceHints) {
       const cx = padding + hint.y * cellSize;
@@ -1279,12 +1277,34 @@ function drawBoard() {
       ctx.beginPath();
       ctx.arc(cx, cy, cellSize * 0.38, 0, Math.PI * 2);
       ctx.fill();
-      // Draw marker text
+      // Draw marker emoji
       ctx.globalAlpha = 1.0;
       ctx.font = `${Math.max(12, cellSize * 0.4)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(style.marker, cx, cy);
+      // Draw label text below the marker
+      ctx.fillStyle = style.color;
+      ctx.font = `bold ${Math.max(9, cellSize * 0.28)}px sans-serif`;
+      ctx.fillText(hint.label, cx, cy + cellSize * 0.5);
+      ctx.restore();
+    }
+    // Draw legend at top-right corner of board
+    if (guidanceHints.length > 0) {
+      ctx.save();
+      const lx = canvas.width - 10;
+      const ly = 10;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.font = `bold ${Math.max(10, cellSize * 0.3)}px sans-serif`;
+      for (let i = 0; i < rankStyles.length; i++) {
+        const s = rankStyles[i];
+        ctx.fillStyle = s.color;
+        ctx.fillText(`${s.marker} ${s.rankLabel}`, lx, ly + i * (cellSize * 0.38));
+      }
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = `${Math.max(9, cellSize * 0.22)}px sans-serif`;
+      ctx.fillText('點擊標記查看說明', lx, ly + 3 * (cellSize * 0.38));
       ctx.restore();
     }
   }
@@ -2366,11 +2386,14 @@ canvas.addEventListener('click', (e) => {
     const hint = guidanceHints.find(h => h.x === x && h.y === y);
     if (hint) {
       if (guidanceTooltip && guidanceTooltip.x === x && guidanceTooltip.y === y) {
+        // Second click on same hint → close tooltip and place stone
         guidanceTooltip = null;
         hideGuidanceTooltip();
       } else {
+        // First click on hint → show tooltip, don't place stone
         guidanceTooltip = hint;
         showGuidanceTooltipAt(hint);
+        return;
       }
     } else {
       guidanceTooltip = null;
