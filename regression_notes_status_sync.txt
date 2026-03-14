@@ -6,3 +6,5 @@
 [2026-03-14 16:18 GMT+8]
 進一步確認：瀏覽器 fetch('ui.js?t=...') 取得的最新腳本文字已包含 getStatusMessage、syncStatus、resizeCanvas 等匯出；但執行後 runtime 的 GoUI 仍只含 updateHUD、setStatus、updateReviewInfo、updateScoringDisplay、hideGuidanceTooltip、showGuidanceTooltipAt、drawStone、drawBoard。
 結論：問題不再是靜態資源來源，而更可能是執行期有舊物件殘留、腳本中止後保留舊版 GoUI，或初始化流程沒有完整重建全域 GoUI。下一步應檢查主控台是否有 ui.js 解析/執行錯誤，以及必要時對 ui.js 匯出方式做最小穩定化修正。
+[2026-03-14 16:22 GMT+8]
+已定位根因之一：目前 http://127.0.0.1:8008/ 頁面受 service worker 控制，cache 名稱為 gogame-v1。瀏覽器 live DOM 的 index.html 內容仍是舊版，雖然 network fetch(no-store) 已可取得新版 index.html。這解釋了為何本地檔案與 curl 回應都已有 syncStatus 包裝，但頁面執行環境仍沒有該函式，也仍保留舊版 GoUI 物件行為。下一個最小段落應處理開發環境中的 service worker 快取干擾，避免回歸測試誤判。
