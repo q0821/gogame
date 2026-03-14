@@ -391,9 +391,7 @@ button.danger:hover { background: #a04a4a; }
 </style>
 </head>
 <body>
-<script src="gnugo-loader.js"></script>
-
-<h1>⚫ 圍棋對弈 ⚪</h1>
+  <h1>圍棋對弈 ⚪</h1>
 
 <!-- Mobile menu button -->
 <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">☰</button>
@@ -593,6 +591,11 @@ button.danger:hover { background: #a04a4a; }
   </div>
 </div>
 
+<script src="gnugo-loader.js"></script>
+<script src="gnugo-service.js"></script>
+<script src="rules.js"></script>
+<script src="game-state.js"></script>
+<script src="ui.js"></script>
 <script>
 // ==================== CONSTANTS ====================
 const EMPTY = 0, BLACK = 1, WHITE = 2;
@@ -619,8 +622,6 @@ let gameMode = 'pvc';
 let playerColor = BLACK;
 let aiLevel = 10;
 let isAIThinking = false;
-let gnugoModule = null;
-let gnugoReady = false;
 
 // Timer
 let timerEnabled = false;
@@ -658,176 +659,41 @@ let lastMove = null;
 let hoverPos = null;
 
 // ==================== BOARD / RULES ENGINE ====================
-function createBoard(n) {
-  return Array.from({ length: n }, () => Array(n).fill(EMPTY));
-}
-
-function cloneBoard(b) {
-  return b.map(r => [...r]);
-}
-
-function opponent(player) {
-  return player === BLACK ? WHITE : BLACK;
-}
+const createBoard = GoRules.createBoard;
+const cloneBoard = GoRules.cloneBoard;
+const opponent = GoRules.opponent;
 
 function inBounds(x, y) {
-  return x >= 0 && x < size && y >= 0 && y < size;
+  return GoRules.inBounds(size, x, y);
 }
 
 function getNeighbors(x, y) {
-  return [[x-1,y],[x+1,y],[x,y-1],[x,y+1]].filter(([a,b]) => inBounds(a,b));
+  return GoRules.getNeighbors(size, x, y);
 }
 
 function getGroup(b, x, y) {
-  const color = b[x][y];
-  if (color === EMPTY) return { stones: [], liberties: new Set() };
-  const visited = new Set();
-  const stones = [];
-  const liberties = new Set();
-  const stack = [[x, y]];
-  while (stack.length) {
-    const [cx, cy] = stack.pop();
-    const key = cx * size + cy;
-    if (visited.has(key)) continue;
-    visited.add(key);
-    if (b[cx][cy] === color) {
-      stones.push([cx, cy]);
-      for (const [nx, ny] of getNeighbors(cx, cy)) {
-        if (b[nx][ny] === EMPTY) liberties.add(nx * size + ny);
-        else if (b[nx][ny] === color && !visited.has(nx * size + ny)) stack.push([nx, ny]);
-      }
-    }
-  }
-  return { stones, liberties };
+  return GoRules.getGroup(b, size, x, y);
 }
 
 function removeGroup(b, stones) {
-  for (const [x, y] of stones) b[x][y] = EMPTY;
-  return stones.length;
+  return GoRules.removeGroup(b, stones);
 }
 
 function boardToString(b) {
-  return b.map(r => r.join('')).join('');
+  return GoRules.boardToString(b);
 }
 
-// Returns { valid, newBoard, captured } or { valid: false }
 function tryPlaceStone(b, x, y, player, currentKo) {
-  if (b[x][y] !== EMPTY) return { valid: false };
-
-  const newBoard = cloneBoard(b);
-  newBoard[x][y] = player;
-  let captured = 0;
-  let capturedSingle = null;
-  const opp = opponent(player);
-
-  // Remove opponent groups with no liberties
-  for (const [nx, ny] of getNeighbors(x, y)) {
-    if (newBoard[nx][ny] === opp) {
-      const group = getGroup(newBoard, nx, ny);
-      if (group.liberties.size === 0) {
-        if (group.stones.length === 1) capturedSingle = group.stones[0];
-        captured += removeGroup(newBoard, group.stones);
-      }
-    }
-  }
-
-  // Check suicide
-  const selfGroup = getGroup(newBoard, x, y);
-  if (selfGroup.liberties.size === 0) return { valid: false };
-
-  // Check ko
-  if (currentKo && currentKo[0] === x && currentKo[1] === y) return { valid: false };
-
-  // Determine new ko point
-  let newKo = null;
-  if (captured === 1 && capturedSingle && selfGroup.stones.length === 1 && selfGroup.liberties.size === 1) {
-    newKo = capturedSingle;
-  }
-
-  return { valid: true, newBoard, captured, newKo };
+  return GoRules.tryPlaceStone(b, size, x, y, player, currentKo);
 }
 
 function getLegalMoves(b, player, ko) {
-  const moves = [];
-  for (let x = 0; x < size; x++)
-    for (let y = 0; y < size; y++)
-      if (tryPlaceStone(b, x, y, player, ko).valid) moves.push([x, y]);
-  return moves;
+  return GoRules.getLegalMoves(b, size, player, ko);
 }
 
 // ==================== SCORING ====================
 function calculateScore(b, dead) {
-  const scored = cloneBoard(b);
-  let deadBlack = 0, deadWhite = 0;
-  // Remove dead stones
-  for (const key of dead) {
-    const x = Math.floor(key / size), y = key % size;
-    const color = scored[x][y];
-    if (color !== EMPTY) {
-      if (color === BLACK) deadBlack++;
-      else deadWhite++;
-      scored[x][y] = EMPTY;
-    }
-  }
-
-  // Flood fill to find territory
-  const territory = Array.from({ length: size }, () => Array(size).fill(0));
-  const visited = Array.from({ length: size }, () => Array(size).fill(false));
-
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      if (visited[x][y] || scored[x][y] !== EMPTY) continue;
-      const region = [];
-      const borders = new Set();
-      const stack = [[x, y]];
-      while (stack.length) {
-        const [cx, cy] = stack.pop();
-        if (visited[cx][cy]) continue;
-        visited[cx][cy] = true;
-        if (scored[cx][cy] === EMPTY) {
-          region.push([cx, cy]);
-          for (const [nx, ny] of getNeighbors(cx, cy)) {
-            if (scored[nx][ny] !== EMPTY) borders.add(scored[nx][ny]);
-            else if (!visited[nx][ny]) stack.push([nx, ny]);
-          }
-        }
-      }
-      if (borders.size === 1) {
-        const owner = [...borders][0];
-        for (const [rx, ry] of region) territory[rx][ry] = owner;
-      }
-    }
-  }
-
-  let blackStones = 0, whiteStones = 0, blackTerritory = 0, whiteTerritory = 0;
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      if (scored[x][y] === BLACK) blackStones++;
-      else if (scored[x][y] === WHITE) whiteStones++;
-      if (territory[x][y] === BLACK) blackTerritory++;
-      else if (territory[x][y] === WHITE) whiteTerritory++;
-    }
-  }
-
-  if (gameRules === 'japanese') {
-    // Japanese: territory + prisoners (captures during game + dead stones)
-    const blackPrisoners = captures[BLACK] + deadWhite;
-    const whitePrisoners = captures[WHITE] + deadBlack;
-    return {
-      black: blackTerritory + blackPrisoners,
-      white: whiteTerritory + whitePrisoners + komi,
-      blackStones: blackPrisoners, blackTerritory, whiteStones: whitePrisoners, whiteTerritory,
-      territory
-    };
-  } else {
-    // Chinese: stones on board + territory
-    return {
-      black: blackStones + blackTerritory,
-      white: whiteStones + whiteTerritory + komi,
-      blackStones, blackTerritory, whiteStones, whiteTerritory,
-      territory
-    };
-  }
+  return GoRules.calculateScore(b, size, dead, captures, gameRules, komi);
 }
 
 // ==================== CAPTURE HINTS ====================
@@ -935,7 +801,7 @@ function requestGuidanceHints() {
   guidanceTooltip = null;
   hideGuidanceTooltip();
 
-  if (!gnugoReady) {
+  if (!GnuGoService.isReady()) {
     guidanceLoading = true;
     drawBoard();
     initGnuGo().then(() => {
@@ -954,79 +820,12 @@ function requestGuidanceHints() {
     try {
       const phase = getGamePhase();
       const hints = [];
-      const sgfBase = buildSGF();
+      const topMoves = GnuGoService.getTopMoves(moveHistory, size, komi, currentPlayer, 3);
 
-      // Get first candidate from GnuGo
-      const result1 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfBase]);
-      const move1 = parseGnuGoMove(result1);
-      if (move1) {
-        const label = getGuidanceLabel(move1[0], move1[1], 0, phase);
-        hints.push({ x: move1[0], y: move1[1], rank: 0, label });
-
-        // Get second candidate: place the first move then ask for next
-        const letters = 'abcdefghijklmnopqrs';
-        const color = currentPlayer === BLACK ? 'B' : 'W';
-        const sgf2Base = sgfBase.slice(0, -1) + `;${color}[${letters[move1[1]]}${letters[move1[0]]}])`;
-        // Ask GnuGo to play the same color again by building SGF where opponent passed
-        const oppColor = currentPlayer === BLACK ? 'W' : 'B';
-        const sgf2 = sgf2Base.slice(0, -1) + `;${oppColor}[];${color}[])`.slice(0, -1);
-        // Simpler approach: build SGF with current move + opponent pass, ask for move
-        const sgfForSecond = buildSGF().slice(0, -1) +
-          `;${color}[${letters[move1[1]]}${letters[move1[0]]}]` +
-          `;${oppColor}[])`;
-        const result2 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfForSecond]);
-        // The response should have moveHistory.length + 2 + 1 moves
-        const movePattern = /;([BW])\[([a-s]{0,2})\]/g;
-        const allMoves2 = [];
-        let match2;
-        while ((match2 = movePattern.exec(result2)) !== null) {
-          allMoves2.push({ color: match2[1], coord: match2[2] });
-        }
-        const expectedCount2 = moveHistory.length + 2;
-        if (allMoves2.length > expectedCount2) {
-          const gm = allMoves2[allMoves2.length - 1];
-          if (gm.coord && gm.coord.length >= 2) {
-            const col = letters.indexOf(gm.coord[0]);
-            const row = letters.indexOf(gm.coord[1]);
-            if (col >= 0 && row >= 0 && col < size && row < size &&
-                (row !== move1[0] || col !== move1[1])) {
-              const label2 = getGuidanceLabel(row, col, 1, phase);
-              hints.push({ x: row, y: col, rank: 1, label: label2 });
-            }
-          }
-        }
-
-        // Get third candidate similarly
-        if (hints.length >= 2) {
-          const m2 = hints[1];
-          const sgfForThird = buildSGF().slice(0, -1) +
-            `;${color}[${letters[move1[1]]}${letters[move1[0]]}]` +
-            `;${oppColor}[]` +
-            `;${color}[${letters[m2.y]}${letters[m2.x]}]` +
-            `;${oppColor}[])`;
-          const result3 = gnugoModule.ccall('play', 'string', ['number', 'string'], [10, sgfForThird]);
-          const allMoves3 = [];
-          let match3;
-          const mp3 = /;([BW])\[([a-s]{0,2})\]/g;
-          while ((match3 = mp3.exec(result3)) !== null) {
-            allMoves3.push({ color: match3[1], coord: match3[2] });
-          }
-          const expectedCount3 = moveHistory.length + 4;
-          if (allMoves3.length > expectedCount3) {
-            const gm3 = allMoves3[allMoves3.length - 1];
-            if (gm3.coord && gm3.coord.length >= 2) {
-              const col3 = letters.indexOf(gm3.coord[0]);
-              const row3 = letters.indexOf(gm3.coord[1]);
-              if (col3 >= 0 && row3 >= 0 && col3 < size && row3 < size &&
-                  (row3 !== move1[0] || col3 !== move1[1]) &&
-                  (row3 !== m2.x || col3 !== m2.y)) {
-                const label3 = getGuidanceLabel(row3, col3, 2, phase);
-                hints.push({ x: row3, y: col3, rank: 2, label: label3 });
-              }
-            }
-          }
-        }
-      }
+      topMoves.forEach((move, index) => {
+        const label = getGuidanceLabel(move[0], move[1], index, phase);
+        hints.push({ x: move[0], y: move[1], rank: index, label });
+      });
 
       guidanceHints = hints;
     } catch (e) {
@@ -1045,327 +844,52 @@ function clearGuidance() {
 }
 
 function hideGuidanceTooltip() {
-  document.getElementById('guidanceTooltip').style.display = 'none';
+  GoUI.hideGuidanceTooltip();
 }
 
 function showGuidanceTooltipAt(hint) {
-  const el = document.getElementById('guidanceTooltip');
-  const rankNames = ['⭐ 最佳', '🔵 次佳', '🟢 可考慮'];
-  const cx = padding + hint.y * cellSize;
-  const cy = padding + hint.x * cellSize;
-  const left = canvas.offsetLeft + cx;
-  const top = canvas.offsetTop + cy - 35;
-  el.textContent = `${rankNames[hint.rank] || ''} — ${hint.label}（點擊落子）`;
-  el.style.left = left + 'px';
-  el.style.top = top + 'px';
-  el.style.transform = 'translateX(-50%)';
-  el.style.display = 'block';
+  GoUI.showGuidanceTooltipAt({ canvas, padding, cellSize }, hint);
 }
 
 // ==================== RENDERING ====================
-function resizeCanvas() {
-  const isMobile = window.innerWidth <= 900;
-  let maxSize;
-  if (isMobile) {
-    const maxW = window.innerWidth - 20;
-    const maxH = window.innerHeight - 160;
-    maxSize = Math.max(280, Math.min(maxW, maxH));
-  } else {
-    const panelWidth = 260;
-    const maxW = window.innerWidth - panelWidth * 2 - 80;
-    const maxH = window.innerHeight - 120;
-    maxSize = Math.max(400, Math.min(maxW, maxH, 800));
-  }
-  cellSize = Math.floor((maxSize - padding * 2) / (size - 1));
-  const canvasSize = cellSize * (size - 1) + padding * 2;
-  canvas.width = canvasSize;
-  canvas.height = canvasSize;
-}
-
 function drawBoard() {
-  resizeCanvas();
-  const w = canvas.width;
-
-  // Wood background
-  ctx.fillStyle = '#dcb35c';
-  ctx.fillRect(0, 0, w, w);
-  // Wood grain texture
-  ctx.save();
-  ctx.globalAlpha = 0.15;
-  for (let i = 0; i < w; i += 8) {
-    ctx.strokeStyle = i % 24 === 0 ? '#a08030' : '#c4a04c';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(w, i + (Math.sin(i * 0.05) * 3));
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // Grid lines
-  ctx.strokeStyle = '#5a4420';
-  ctx.lineWidth = 1;
-  for (let i = 0; i < size; i++) {
-    const pos = padding + i * cellSize;
-    ctx.beginPath();
-    ctx.moveTo(padding, pos);
-    ctx.lineTo(padding + (size - 1) * cellSize, pos);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(pos, padding);
-    ctx.lineTo(pos, padding + (size - 1) * cellSize);
-    ctx.stroke();
-  }
-
-  // Star points
-  const stars = STAR_POINTS[size] || [];
-  for (const [x, y] of stars) {
-    ctx.fillStyle = '#5a4420';
-    ctx.beginPath();
-    ctx.arc(padding + y * cellSize, padding + x * cellSize, cellSize * 0.12, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Coordinate labels
-  ctx.fillStyle = '#5a4420';
-  ctx.font = `${Math.max(10, cellSize * 0.35)}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const letters = 'ABCDEFGHJKLMNOPQRST';
-  for (let i = 0; i < size; i++) {
-    const pos = padding + i * cellSize;
-    ctx.fillText(letters[i], pos, padding + (size - 1) * cellSize + cellSize * 0.7);
-    ctx.fillText(size - i, padding - cellSize * 0.6, pos);
-  }
-
-  // Territory markers (during scoring)
-  if (isScoring) {
-    const scoreData = calculateScore(board, deadStones);
-    for (let x = 0; x < size; x++) {
-      for (let y = 0; y < size; y++) {
-        if (board[x][y] === EMPTY && scoreData.territory[x][y] !== 0) {
-          const cx = padding + y * cellSize;
-          const cy = padding + x * cellSize;
-          ctx.fillStyle = scoreData.territory[x][y] === BLACK ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.4)';
-          ctx.fillRect(cx - cellSize * 0.2, cy - cellSize * 0.2, cellSize * 0.4, cellSize * 0.4);
-        }
-      }
-    }
-  }
-
-  // Stones
   const displayBoard = isReviewing ? getReviewBoard() : board;
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      if (displayBoard[x][y] !== EMPTY) {
-        drawStone(x, y, displayBoard[x][y], deadStones.has(x * size + y));
-      }
-    }
-  }
+  const scoreData = isScoring ? calculateScore(board, deadStones) : null;
+  const captureHints = showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking
+    ? getCaptureHints(displayBoard, currentPlayer)
+    : [];
+  const lastMoveToShow = isReviewing ? getReviewLastMove() : lastMove;
 
-  // Last move marker
-  const lm = isReviewing ? getReviewLastMove() : lastMove;
-  if (lm) {
-    const [lx, ly] = lm;
-    if (displayBoard[lx][ly] !== EMPTY) {
-      ctx.fillStyle = displayBoard[lx][ly] === BLACK ? '#fff' : '#000';
-      ctx.beginPath();
-      ctx.arc(padding + ly * cellSize, padding + lx * cellSize, cellSize * 0.15, 0, Math.PI * 2);
-      ctx.fill();
+  GoUI.drawBoard(
+    { canvas, ctx, padding, cellSize, starPoints: STAR_POINTS },
+    {
+      size,
+      board,
+      displayBoard,
+      deadStones,
+      lastMove: lastMoveToShow,
+      currentPlayer,
+      gameOver,
+      isAIThinking,
+      isReviewing,
+      isScoring,
+      hoverPos,
+      showingHint,
+      captureHints,
+      guidanceEnabled,
+      guidanceLoading,
+      guidanceHints,
+      currentReviewMove,
+      analysisData,
+      isAnalyzing,
+      scoreData
     }
-  }
-
-  // AI Analysis markers (during review)
-  if (isReviewing && analysisData && !isAnalyzing && currentReviewMove > 0) {
-    const d = analysisData[currentReviewMove - 1];
-    if (d && !d.move.pass) {
-      // Color the current move's marker based on rating
-      const mx = d.move.x, my = d.move.y;
-      const mcx = padding + my * cellSize;
-      const mcy = padding + mx * cellSize;
-      let markerColor = null;
-      let markerLabel = '';
-      if (d.rating === 'good') {
-        markerColor = '#4caf50'; markerLabel = '✓';
-      } else if (d.rating === 'question') {
-        markerColor = '#ff9800'; markerLabel = '?';
-      } else if (d.rating === 'bad') {
-        markerColor = '#f44336'; markerLabel = '✗';
-      }
-      if (markerColor) {
-        ctx.save();
-        ctx.fillStyle = markerColor;
-        ctx.font = `bold ${Math.max(12, cellSize * 0.4)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(markerLabel, mcx, mcy);
-        ctx.restore();
-      }
-
-      // Show AI suggestion if different
-      if (d.aiSuggestion && d.rating !== 'good') {
-        const [ax, ay] = d.aiSuggestion;
-        const acx = padding + ay * cellSize;
-        const acy = padding + ax * cellSize;
-        ctx.save();
-        ctx.globalAlpha = 0.5;
-        ctx.strokeStyle = '#4caf50';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(acx, acy, cellSize * 0.38, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.globalAlpha = 0.8;
-        ctx.fillStyle = '#4caf50';
-        ctx.font = `bold ${Math.max(10, cellSize * 0.3)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('AI', acx, acy);
-        ctx.restore();
-      }
-    }
-  }
-
-  // Capture hints
-  if (showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
-    const hints = getCaptureHints(displayBoard, currentPlayer);
-    for (const [hx, hy] of hints) {
-      const cx = padding + hy * cellSize;
-      const cy = padding + hx * cellSize;
-      ctx.save();
-      ctx.strokeStyle = '#ff4444';
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, cellSize * 0.38, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      // Small "!" indicator
-      ctx.fillStyle = '#ff4444';
-      ctx.font = `bold ${Math.max(10, cellSize * 0.35)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('!', cx, cy);
-      ctx.restore();
-    }
-  }
-
-  // Beginner guidance markers
-  if (guidanceEnabled && !gameOver && !isReviewing && !isScoring) {
-    if (guidanceLoading) {
-      ctx.save();
-      ctx.fillStyle = 'rgba(240,208,96,0.7)';
-      ctx.font = `${Math.max(12, cellSize * 0.4)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🔄 AI 分析中...', canvas.width / 2, canvas.height - 10);
-      ctx.restore();
-    }
-    const rankStyles = [
-      { color: '#ffd700', marker: '⭐', rankLabel: '最佳' },
-      { color: '#4a9eff', marker: '🔵', rankLabel: '次佳' },
-      { color: '#4caf50', marker: '🟢', rankLabel: '可考慮' }
-    ];
-    for (const hint of guidanceHints) {
-      const cx = padding + hint.y * cellSize;
-      const cy = padding + hint.x * cellSize;
-      const style = rankStyles[hint.rank] || rankStyles[2];
-      ctx.save();
-      // Draw glowing circle
-      ctx.strokeStyle = style.color;
-      ctx.lineWidth = 2.5;
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.arc(cx, cy, cellSize * 0.4, 0, Math.PI * 2);
-      ctx.stroke();
-      // Fill semi-transparent
-      ctx.fillStyle = style.color;
-      ctx.globalAlpha = 0.15;
-      ctx.beginPath();
-      ctx.arc(cx, cy, cellSize * 0.38, 0, Math.PI * 2);
-      ctx.fill();
-      // Draw marker emoji
-      ctx.globalAlpha = 1.0;
-      ctx.font = `${Math.max(12, cellSize * 0.4)}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(style.marker, cx, cy);
-      // Draw label text below the marker
-      ctx.fillStyle = style.color;
-      ctx.font = `bold ${Math.max(9, cellSize * 0.28)}px sans-serif`;
-      ctx.fillText(hint.label, cx, cy + cellSize * 0.5);
-      ctx.restore();
-    }
-    // Draw legend at top-right corner of board
-    if (guidanceHints.length > 0) {
-      ctx.save();
-      const lx = canvas.width - 10;
-      const ly = 10;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'top';
-      ctx.font = `bold ${Math.max(10, cellSize * 0.3)}px sans-serif`;
-      for (let i = 0; i < rankStyles.length; i++) {
-        const s = rankStyles[i];
-        ctx.fillStyle = s.color;
-        ctx.fillText(`${s.marker} ${s.rankLabel}`, lx, ly + i * (cellSize * 0.38));
-      }
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = `${Math.max(9, cellSize * 0.22)}px sans-serif`;
-      ctx.fillText('點擊標記查看說明', lx, ly + 3 * (cellSize * 0.38));
-      ctx.restore();
-    }
-  }
-
-  // Hover preview
-  if (hoverPos && !gameOver && !isReviewing && !isScoring && !isAIThinking) {
-    const [hx, hy] = hoverPos;
-    if (board[hx][hy] === EMPTY) {
-      ctx.globalAlpha = 0.4;
-      drawStone(hx, hy, currentPlayer, false);
-      ctx.globalAlpha = 1.0;
-    }
-  }
+  );
+  cellSize = Math.floor((canvas.width - padding * 2) / (size - 1));
 }
 
 function drawStone(x, y, color, isDead) {
-  const cx = padding + y * cellSize;
-  const cy = padding + x * cellSize;
-  const r = cellSize * 0.44;
-
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath();
-  ctx.arc(cx + 2, cy + 2, r, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Stone
-  const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
-  if (color === BLACK) {
-    grad.addColorStop(0, '#555');
-    grad.addColorStop(1, '#111');
-  } else {
-    grad.addColorStop(0, '#fff');
-    grad.addColorStop(1, '#ccc');
-  }
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = color === BLACK ? '#000' : '#aaa';
-  ctx.lineWidth = 0.5;
-  ctx.stroke();
-
-  // Dead stone marker
-  if (isDead) {
-    ctx.strokeStyle = '#ff4444';
-    ctx.lineWidth = 2.5;
-    const d = r * 0.5;
-    ctx.beginPath();
-    ctx.moveTo(cx - d, cy - d);
-    ctx.lineTo(cx + d, cy + d);
-    ctx.moveTo(cx + d, cy - d);
-    ctx.lineTo(cx - d, cy + d);
-    ctx.stroke();
-  }
+  GoUI.drawStone({ ctx, padding, cellSize }, x, y, color, isDead);
 }
 
 // ==================== GAME ACTIONS ====================
@@ -1373,44 +897,25 @@ function placeStone(x, y) {
   if (gameOver || isReviewing || isScoring) return false;
   if (isAIThinking && gameMode === 'pvc') return false;
 
-  const result = tryPlaceStone(board, x, y, currentPlayer, koPoint);
-  if (!result.valid) return false;
+  syncGameStateStore();
+  const result = GameState.applyMove(x, y);
+  if (!result.ok) return false;
+  applyStateFromStore();
 
   showingHint = false;
   clearGuidance();
 
-  // Save state for undo
-  boardHistory.push({
-    board: cloneBoard(board),
-    captures: { ...captures },
-    koPoint,
-    currentPlayer,
-    lastMove,
-    passCount
-  });
-
-  board = result.newBoard;
-  captures[currentPlayer] += result.captured;
-  koPoint = result.newKo || null;
-  lastMove = [x, y];
-  passCount = 0;
-  moveHistory.push({ x, y, player: currentPlayer, captured: result.captured });
-
-  currentPlayer = opponent(currentPlayer);
   updateUI();
   drawBoard();
   playSound('place');
   if (result.captured > 0) setTimeout(() => playSound('capture'), 80);
 
-  // Timer switch
   if (timerEnabled) switchTimer();
 
-  // AI turn
   if (gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver) {
     setTimeout(() => requestAIMove(), 100);
   }
 
-  // Beginner guidance after move
   if (guidanceEnabled && !gameOver) {
     if (gameMode !== 'pvc' || currentPlayer === playerColor) {
       setTimeout(() => requestGuidanceHints(), 150);
@@ -1426,26 +931,16 @@ function doPass() {
   showingHint = false;
   clearGuidance();
 
-  boardHistory.push({
-    board: cloneBoard(board),
-    captures: { ...captures },
-    koPoint,
-    currentPlayer,
-    lastMove,
-    passCount
-  });
+  syncGameStateStore();
+  const result = GameState.applyPass();
+  if (!result.ok) return;
+  applyStateFromStore();
 
-  passCount++;
-  moveHistory.push({ x: -1, y: -1, player: currentPlayer, pass: true });
-  koPoint = null;
-  lastMove = null;
-
-  if (passCount >= 2) {
+  if (result.endedByDoublePass) {
     endGameByScoring();
     return;
   }
 
-  currentPlayer = opponent(currentPlayer);
   updateUI();
   setStatus(`${currentPlayer === BLACK ? '黑' : '白'}方 Pass`);
   drawBoard();
@@ -1473,18 +968,11 @@ function doUndo() {
   }
   if (boardHistory.length === 0) return;
 
-  // In PvC mode, undo twice (undo AI + player move)
-  const undoCount = (gameMode === 'pvc' && boardHistory.length >= 2) ? 2 : 1;
-  for (let i = 0; i < undoCount && boardHistory.length > 0; i++) {
-    const state = boardHistory.pop();
-    board = state.board;
-    captures = state.captures;
-    koPoint = state.koPoint;
-    currentPlayer = state.currentPlayer;
-    lastMove = state.lastMove;
-    passCount = state.passCount;
-    moveHistory.pop();
-  }
+  syncGameStateStore();
+  const result = GameState.undo({ gameMode });
+  if (!result.ok) return;
+  applyStateFromStore();
+
   updateUI();
   drawBoard();
   setStatus('已悔棋');
@@ -1501,8 +989,9 @@ function doResign() {
 }
 
 function endGameByScoring() {
-  isScoring = true;
-  deadStones.clear();
+  syncGameStateStore();
+  GameState.beginScoring();
+  applyStateFromStore();
   stopTimer();
   document.getElementById('scoringPanel').style.display = 'block';
   setStatus('請標記死子，然後確認結果');
@@ -1512,25 +1001,7 @@ function endGameByScoring() {
 
 function updateScoringDisplay() {
   const score = calculateScore(board, deadStones);
-  document.getElementById('blackScore').textContent = score.black.toFixed(1);
-  if (gameRules === 'japanese') {
-    document.getElementById('blackScoreLabel').textContent = '　目+提子';
-    document.getElementById('whiteScoreLabel').textContent = '　目+提子（含貼目）';
-    document.getElementById('blackDetail').textContent = `目 ${score.blackTerritory} + 提子 ${score.blackStones}`;
-    document.getElementById('whiteDetail').textContent = `目 ${score.whiteTerritory} + 提子 ${score.whiteStones} + 貼目 ${komi}`;
-  } else {
-    document.getElementById('blackScoreLabel').textContent = '　棋子+目';
-    document.getElementById('whiteScoreLabel').textContent = '　棋子+目（含貼目）';
-    document.getElementById('blackDetail').textContent = `${score.blackStones} + ${score.blackTerritory}`;
-    document.getElementById('whiteDetail').textContent = `${score.whiteStones} + ${score.whiteTerritory} + ${komi}`;
-  }
-  document.getElementById('whiteScore').textContent = score.white.toFixed(1);
-  const diff = score.black - score.white;
-  document.getElementById('resultText').textContent = diff > 0
-    ? `⚫ 黑勝 ${diff.toFixed(1)} 目`
-    : diff < 0
-    ? `⚪ 白勝 ${Math.abs(diff).toFixed(1)} 目`
-    : '和棋';
+  GoUI.updateScoringDisplay({ gameRules, komi }, score);
 }
 
 function confirmScoring() {
@@ -1538,14 +1009,17 @@ function confirmScoring() {
   const diff = score.black - score.white;
   const winner = diff > 0 ? '⚫ 黑方' : '⚪ 白方';
   const detail = `黑 ${score.black.toFixed(1)} vs 白 ${score.white.toFixed(1)}（含貼目 ${komi}）`;
-  isScoring = false;
+  syncGameStateStore();
+  GameState.confirmScoring();
+  applyStateFromStore();
   document.getElementById('scoringPanel').style.display = 'none';
   endGame(`${winner}勝`, detail);
 }
 
 function cancelScoring() {
-  isScoring = false;
-  deadStones.clear();
+  syncGameStateStore();
+  GameState.cancelScoring();
+  applyStateFromStore();
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目');
   drawBoard();
@@ -1615,8 +1089,10 @@ function updateTimerDisplay() {
 // ==================== REVIEW ====================
 function enterReview() {
   if (!document.getElementById('reviewToggle').checked) return;
-  isReviewing = true;
-  currentReviewMove = moveHistory.length;
+  syncGameStateStore();
+  const result = GameState.enterReview();
+  if (!result.ok) return;
+  applyStateFromStore();
   document.getElementById('reviewBar').style.display = 'block';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'block';
@@ -1630,7 +1106,10 @@ function enterReview() {
 }
 
 function exitReview() {
-  isReviewing = false;
+  syncGameStateStore();
+  const result = GameState.exitReview();
+  if (!result.ok) return;
+  applyStateFromStore();
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
   document.getElementById('analysisBtn').style.display = 'none';
@@ -1640,8 +1119,10 @@ function exitReview() {
 }
 
 function reviewGo(n) {
-  if (!isReviewing) return;
-  currentReviewMove = Math.max(0, Math.min(n, moveHistory.length));
+  syncGameStateStore();
+  const result = GameState.reviewGo(n);
+  if (!result.ok) return;
+  applyStateFromStore();
   updateReviewInfo();
   if (analysisData && !isAnalyzing) updateAnalysisMoveInfo();
   drawBoard();
@@ -1666,15 +1147,11 @@ function getReviewLastMove() {
 }
 
 function updateReviewInfo() {
-  const info = document.getElementById('reviewInfo');
-  if (currentReviewMove === 0) {
-    info.textContent = '開始位置';
-  } else {
-    const m = moveHistory[currentReviewMove - 1];
-    const letters = 'ABCDEFGHJKLMNOPQRST';
-    const moveStr = m.pass ? 'Pass' : `${letters[m.y]}${size - m.x}`;
-    info.textContent = `第 ${currentReviewMove} 手 / ${moveHistory.length} - ${m.player === BLACK ? '⚫' : '⚪'} ${moveStr}`;
-  }
+  GoUI.updateReviewInfo({
+    currentReviewMove,
+    moveHistory,
+    size
+  });
 }
 
 // ==================== AI REVIEW ANALYSIS ====================
@@ -1737,8 +1214,7 @@ function analyzeStep(moveIndex) {
   setTimeout(() => {
     try {
       const level = 10; // always use max level for analysis
-      const result = gnugoModule.ccall('play', 'string', ['number', 'string'], [level, sgf]);
-      const aiMove = parseGnuGoMove(result, moveIndex);
+      const aiMove = GnuGoService.play(level, sgf, moveIndex, size).move;
 
       let rating = 'good';
       if (aiMove) {
@@ -1817,80 +1293,17 @@ function updateAnalysisMoveInfo() {
 
 // ==================== AI (GnuGo WASM) ====================
 
-// Convert move history to SGF string for GnuGo
 function buildSGF() {
-  const letters = 'abcdefghijklmnopqrs';
-  let sgf = `(;GM[1]FF[4]SZ[${size}]KM[${komi}]`;
-  for (const m of moveHistory) {
-    const color = m.player === BLACK ? 'B' : 'W';
-    if (m.pass) {
-      sgf += `;${color}[]`;
-    } else {
-      sgf += `;${color}[${letters[m.y]}${letters[m.x]}]`;
-    }
-  }
-  sgf += ')';
-  return sgf;
+  return GnuGoService.buildSGF(moveHistory, size, komi);
 }
 
-// Parse GnuGo's SGF response to extract the last move
 function parseGnuGoMove(sgfResponse, expectedMoveCount) {
   const expected = expectedMoveCount !== undefined ? expectedMoveCount : moveHistory.length;
-  const letters = 'abcdefghijklmnopqrs';
-  // Find all move nodes ;B[..] or ;W[..]
-  const movePattern = /;([BW])\[([a-s]{0,2})\]/g;
-  const allMoves = [];
-  let match;
-  while ((match = movePattern.exec(sgfResponse)) !== null) {
-    allMoves.push({ color: match[1], coord: match[2] });
-  }
-
-  if (allMoves.length <= expected) {
-    return null; // GnuGo passed or no move found
-  }
-
-  const gnugoMove = allMoves[allMoves.length - 1];
-  if (!gnugoMove.coord || gnugoMove.coord.length < 2) {
-    return null; // Pass
-  }
-
-  const col = letters.indexOf(gnugoMove.coord[0]);
-  const row = letters.indexOf(gnugoMove.coord[1]);
-  if (col < 0 || row < 0 || col >= size || row >= size) return null;
-
-  return [row, col];
+  return GnuGoService.parseMoveFromSgfResponse(sgfResponse, expected, size);
 }
 
-// Initialize GnuGo WASM module
 function initGnuGo() {
-  if (gnugoReady) return Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    setStatus('⏳ 載入 GnuGo AI 引擎...');
-    const Module = {};
-
-    Module.locateFile = function(path) {
-      if (path === 'gnugo.wasm') return 'gnugo.wasm';
-      return path;
-    };
-
-    fetch('gnugo.wasm')
-      .then(response => response.arrayBuffer())
-      .then(bytes => {
-        Module.wasmBinary = new Uint8Array(bytes);
-        GnuGoLoader.init(Module);
-        gnugoModule = Module;
-        gnugoReady = true;
-        console.log('GnuGo WASM loaded');
-        setStatus('GnuGo AI 引擎載入完成！');
-        resolve();
-      })
-      .catch(err => {
-        console.error('Failed to load GnuGo WASM:', err);
-        setStatus('⚠️ AI 引擎載入失敗，請確認 gnugo.wasm 檔案存在');
-        reject(err);
-      });
-  });
+  return GnuGoService.ensureReady(setStatus);
 }
 
 /* replaced MCTS code below */
@@ -2180,7 +1593,7 @@ self.onmessage = function(e) {
 
 function requestAIMove() {
   if (gameOver || isAIThinking) return;
-  if (!gnugoReady) {
+  if (!GnuGoService.isReady()) {
     initGnuGo().then(() => requestAIMove()).catch(() => {
       setStatus('⚠️ AI 引擎未就緒');
       isAIThinking = false;
@@ -2196,8 +1609,7 @@ function requestAIMove() {
   setTimeout(() => {
     try {
       const sgf = buildSGF();
-      const result = gnugoModule.ccall('play', 'string', ['number', 'string'], [aiLevel, sgf]);
-      const move = parseGnuGoMove(result);
+      const move = GnuGoService.play(aiLevel, sgf, moveHistory.length, size).move;
 
       isAIThinking = false;
       if (move) {
@@ -2313,41 +1725,17 @@ function playSound(type) {
 
 // ==================== UI ====================
 function updateUI() {
-  const turnEl = document.getElementById('turnDisplay');
-  if (gameOver) {
-    turnEl.textContent = '遊戲結束';
-    turnEl.className = 'current-turn';
-  } else if (isAIThinking) {
-    turnEl.textContent = '🤔 AI 思考中...';
-    turnEl.className = 'current-turn';
-  } else {
-    turnEl.textContent = currentPlayer === BLACK ? '⚫ 黑方回合' : '⚪ 白方回合';
-    turnEl.className = 'current-turn ' + (currentPlayer === BLACK ? 'black' : 'white');
-  }
-  document.getElementById('blackCaptures').textContent = captures[BLACK];
-  document.getElementById('whiteCaptures').textContent = captures[WHITE];
-  document.getElementById('moveCount').textContent = moveHistory.length;
-
-  // Mobile info bar
-  const mt = document.getElementById('mobileTurn');
-  if (gameOver) {
-    mt.textContent = '遊戲結束';
-    mt.className = 'turn-badge';
-  } else if (isAIThinking) {
-    mt.textContent = '🤔 AI 思考中';
-    mt.className = 'turn-badge';
-  } else {
-    mt.textContent = currentPlayer === BLACK ? '⚫ 黑方' : '⚪ 白方';
-    mt.className = 'turn-badge ' + (currentPlayer === BLACK ? 'black' : 'white');
-  }
-  document.getElementById('mobileBlackCap').textContent = captures[BLACK];
-  document.getElementById('mobileWhiteCap').textContent = captures[WHITE];
-  document.getElementById('mobileMoveCount').textContent = moveHistory.length;
+  GoUI.updateHUD({
+    gameOver,
+    isAIThinking,
+    currentPlayer,
+    captures,
+    moveHistory
+  });
 }
 
 function setStatus(msg) {
-  document.getElementById('statusMsg').textContent = msg;
-  document.getElementById('mobileStatus').textContent = msg;
+  GoUI.setStatus(msg);
 }
 
 function startNewGame() {
@@ -2360,19 +1748,18 @@ function startNewGame() {
   gameRules = document.getElementById('gameRules').value;
   komi = gameRules === 'japanese' ? 6.5 : 7.5;
 
-  // Reset state
-  board = createBoard(size);
-  currentPlayer = BLACK;
-  captures = { [BLACK]: 0, [WHITE]: 0 };
-  moveHistory = [];
-  boardHistory = [];
-  koPoint = null;
-  passCount = 0;
-  gameOver = false;
-  lastMove = null;
-  isReviewing = false;
-  isScoring = false;
-  deadStones.clear();
+  GameState.startGame({
+    size,
+    gameMode,
+    playerColor,
+    aiLevel,
+    timerEnabled,
+    timerSeconds,
+    gameRules,
+    komi
+  });
+  applyStateFromStore();
+
   isAIThinking = false;
   analysisData = null;
   isAnalyzing = false;
@@ -2453,13 +1840,10 @@ canvas.addEventListener('click', (e) => {
     // Toggle dead stones
     if (board[x][y] !== EMPTY) {
       const group = getGroup(board, x, y);
-      const key0 = group.stones[0][0] * size + group.stones[0][1];
-      const allDead = deadStones.has(key0);
-      for (const [sx, sy] of group.stones) {
-        const k = sx * size + sy;
-        if (allDead) deadStones.delete(k);
-        else deadStones.add(k);
-      }
+      syncGameStateStore();
+      const result = GameState.toggleDeadGroup(group.stones);
+      if (!result.ok) return;
+      applyStateFromStore();
       updateScoringDisplay();
       drawBoard();
     }
@@ -2530,22 +1914,69 @@ window.addEventListener('resize', () => {
 // ==================== SAVE / RESTORE ====================
 const SAVE_KEY = 'gogame_state';
 
+function syncGameStateStore() {
+  GameState.sync({
+    size,
+    board,
+    currentPlayer,
+    captures,
+    moveHistory,
+    boardHistory,
+    koPoint,
+    passCount,
+    gameOver,
+    lastMove,
+    gameMode,
+    playerColor,
+    aiLevel,
+    timerEnabled,
+    timerSeconds,
+    gameRules,
+    komi,
+    isReviewing,
+    currentReviewMove,
+    isScoring,
+    deadStones
+  });
+}
+
+function applyStateFromStore() {
+  const s = GameState.getState();
+  size = s.size;
+  board = s.board.map(r => [...r]);
+  currentPlayer = s.currentPlayer;
+  captures = { ...s.captures };
+  moveHistory = (s.moveHistory || []).map(m => ({ ...m }));
+  boardHistory = (s.boardHistory || []).map(h => ({
+    board: h.board.map(r => [...r]),
+    captures: { ...h.captures },
+    koPoint: h.koPoint,
+    currentPlayer: h.currentPlayer,
+    lastMove: h.lastMove,
+    passCount: h.passCount
+  }));
+  koPoint = s.koPoint;
+  passCount = s.passCount;
+  gameOver = s.gameOver;
+  lastMove = s.lastMove;
+  gameMode = s.gameMode;
+  playerColor = s.playerColor;
+  aiLevel = s.aiLevel;
+  timerEnabled = s.timerEnabled;
+  timerSeconds = { ...s.timerSeconds };
+  gameRules = s.gameRules;
+  komi = s.komi;
+  isReviewing = s.isReviewing;
+  currentReviewMove = s.currentReviewMove;
+  isScoring = s.isScoring;
+  deadStones = new Set(s.deadStones || []);
+}
+
 function saveGame() {
   if (isReviewing || isScoring) return;
-  const state = {
-    size, board: board.map(r => [...r]), currentPlayer,
-    captures: { 1: captures[BLACK], 2: captures[WHITE] },
-    moveHistory, koPoint, passCount, gameOver, lastMove,
-    gameMode, playerColor, aiLevel, timerEnabled, gameRules, komi,
-    timerSeconds: { 1: timerSeconds[BLACK], 2: timerSeconds[WHITE] },
-    boardHistory: boardHistory.map(s => ({
-      board: s.board.map(r => [...r]),
-      captures: { 1: s.captures[BLACK], 2: s.captures[WHITE] },
-      koPoint: s.koPoint, currentPlayer: s.currentPlayer,
-      lastMove: s.lastMove, passCount: s.passCount
-    }))
-  };
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch(e) {}
+  syncGameStateStore();
+  const snapshot = GameState.getSnapshot();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot)); } catch(e) {}
 }
 
 function loadGame() {
@@ -2555,28 +1986,8 @@ function loadGame() {
     const s = JSON.parse(raw);
     if (!s || !s.board) return false;
 
-    size = s.size;
-    board = s.board.map(r => [...r]);
-    currentPlayer = s.currentPlayer;
-    captures = { [BLACK]: s.captures['1'], [WHITE]: s.captures['2'] };
-    moveHistory = s.moveHistory || [];
-    koPoint = s.koPoint;
-    passCount = s.passCount || 0;
-    gameOver = s.gameOver || false;
-    lastMove = s.lastMove;
-    gameMode = s.gameMode || 'pvp';
-    playerColor = s.playerColor || BLACK;
-    aiLevel = s.aiLevel || 10;
-    timerEnabled = s.timerEnabled || false;
-    gameRules = s.gameRules || 'chinese';
-    komi = s.komi || (gameRules === 'japanese' ? 6.5 : 7.5);
-    timerSeconds = { [BLACK]: s.timerSeconds['1'], [WHITE]: s.timerSeconds['2'] };
-    boardHistory = (s.boardHistory || []).map(h => ({
-      board: h.board.map(r => [...r]),
-      captures: { [BLACK]: h.captures['1'], [WHITE]: h.captures['2'] },
-      koPoint: h.koPoint, currentPlayer: h.currentPlayer,
-      lastMove: h.lastMove, passCount: h.passCount
-    }));
+    GameState.restoreSnapshot(s);
+    applyStateFromStore();
 
     // Sync UI controls
     document.getElementById('boardSize').value = size;
