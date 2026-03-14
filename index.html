@@ -1804,7 +1804,7 @@ function startNewGame() {
   }
 
   updateUI();
-  setStatus(gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '遊戲開始！');
+  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking }, gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '');
   drawBoard();
   clearSave();
   saveGame();
