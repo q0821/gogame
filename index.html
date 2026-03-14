@@ -911,7 +911,7 @@ function placeStone(x, y) {
 
   updateUI();
   const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  setStatus(willRequestAI ? '🤔 GnuGo 思考中...' : `${currentPlayer === BLACK ? '黑' : '白'}方回合`);
+  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking: willRequestAI ? true : isAIThinking });
   drawBoard();
   playSound('place');
   if (result.captured > 0) setTimeout(() => playSound('capture'), 80);
@@ -949,7 +949,7 @@ function doPass() {
 
   updateUI();
   const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  setStatus(willRequestAI ? '🤔 GnuGo 思考中...' : `${currentPlayer === BLACK ? '黑' : '白'}方回合`);
+  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking: willRequestAI ? true : isAIThinking });
   drawBoard();
 
   if (timerEnabled) switchTimer();
