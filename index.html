@@ -1622,6 +1622,10 @@ function requestAIMove() {
       } else {
         doPass();
       }
+      if (!gameOver && !isAIThinking) {
+        setStatus(`${currentPlayer === BLACK ? '黑' : '白'}方回合`);
+        updateUI();
+      }
       // Guidance after AI move
       if (guidanceEnabled && !gameOver && currentPlayer === playerColor) {
         setTimeout(() => requestGuidanceHints(), 150);
