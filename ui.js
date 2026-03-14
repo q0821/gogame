@@ -408,3 +408,4 @@
     drawStone,
     drawBoard
   };
+})(window);
