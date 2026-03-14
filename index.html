@@ -1843,10 +1843,10 @@ function startNewGame() {
   }
 
   const aiStartsGame = gameMode === 'pvc' && playerColor === WHITE && !gameOver;
-  isAIThinking = aiStartsGame;
+  isAIThinking = false;
   syncGameStateStore();
   updateUI();
-  syncStatus();
+  syncStatus(aiStartsGame ? '🤔 GnuGo 思考中...' : '');
   drawBoard();
   clearSave();
   saveGame();
