@@ -1761,6 +1761,7 @@ function startNewGame() {
   applyStateFromStore();
 
   isAIThinking = false;
+  syncGameStateStore();
   analysisData = null;
   isAnalyzing = false;
   guidanceEnabled = document.getElementById('guidanceToggle').checked;
@@ -1936,7 +1937,8 @@ function syncGameStateStore() {
     isReviewing,
     currentReviewMove,
     isScoring,
-    deadStones
+    deadStones,
+    isAIThinking
   });
 }
 
@@ -1970,6 +1972,7 @@ function applyStateFromStore() {
   currentReviewMove = s.currentReviewMove;
   isScoring = s.isScoring;
   deadStones = new Set(s.deadStones || []);
+  isAIThinking = !!s.isAIThinking;
 }
 
 function saveGame() {
@@ -2005,10 +2008,11 @@ function loadGame() {
       document.getElementById('reviewBtn').style.display = 'block';
     }
 
-    isReviewing = false;
-    isScoring = false;
-    isAIThinking = false;
-    deadStones.clear();
+  isReviewing = false;
+  isScoring = false;
+  isAIThinking = false;
+  deadStones.clear();
+  syncGameStateStore();
 
     updateUI();
     drawBoard();

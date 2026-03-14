@@ -56,7 +56,8 @@
       isReviewing: options.isReviewing || false,
       currentReviewMove: options.currentReviewMove || 0,
       isScoring: options.isScoring || false,
-      deadStones: new Set(options.deadStones || [])
+      deadStones: new Set(options.deadStones || []),
+      isAIThinking: options.isAIThinking || false
     };
   }
 
@@ -138,7 +139,8 @@
       isReviewing: false,
       currentReviewMove: 0,
       isScoring: false,
-      deadStones: []
+      deadStones: [],
+      isAIThinking: false
     });
     return getState();
   }
@@ -170,6 +172,7 @@
     if (Object.prototype.hasOwnProperty.call(partialState, 'currentReviewMove')) current.currentReviewMove = partialState.currentReviewMove;
     if (Object.prototype.hasOwnProperty.call(partialState, 'isScoring')) current.isScoring = partialState.isScoring;
     if (Object.prototype.hasOwnProperty.call(partialState, 'deadStones')) current.deadStones = new Set(partialState.deadStones);
+    if (Object.prototype.hasOwnProperty.call(partialState, 'isAIThinking')) current.isAIThinking = partialState.isAIThinking;
     return current;
   }
 
@@ -202,7 +205,8 @@
       ok: true,
       captured: result.captured,
       currentPlayer: current.currentPlayer,
-      gameOver: current.gameOver
+      gameOver: current.gameOver,
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -228,7 +232,8 @@
       ok: true,
       endedByDoublePass: false,
       currentPlayer: current.currentPlayer,
-      passCount: current.passCount
+      passCount: current.passCount,
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -295,7 +300,8 @@
     current.gameOver = true;
     return {
       ok: true,
-      gameOver: current.gameOver
+      gameOver: current.gameOver,
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -314,7 +320,8 @@
 
     return {
       ok: true,
-      deadStones: Array.from(current.deadStones)
+      deadStones: Array.from(current.deadStones),
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -324,7 +331,8 @@
     current.currentReviewMove = current.moveHistory.length;
     return {
       ok: true,
-      currentReviewMove: current.currentReviewMove
+      currentReviewMove: current.currentReviewMove,
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -333,7 +341,8 @@
     current.isReviewing = false;
     return {
       ok: true,
-      isReviewing: current.isReviewing
+      isReviewing: current.isReviewing,
+      isAIThinking: current.isAIThinking
     };
   }
 
@@ -343,7 +352,8 @@
     current.currentReviewMove = Math.max(0, Math.min(n, current.moveHistory.length));
     return {
       ok: true,
-      currentReviewMove: current.currentReviewMove
+      currentReviewMove: current.currentReviewMove,
+      isAIThinking: current.isAIThinking
     };
   }
 
