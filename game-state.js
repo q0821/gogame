@@ -183,7 +183,13 @@
       koPoint: current.koPoint ? [...current.koPoint] : null,
       currentPlayer: current.currentPlayer,
       lastMove: current.lastMove ? [...current.lastMove] : null,
-      passCount: current.passCount || 0
+      passCount: current.passCount || 0,
+      gameOver: !!current.gameOver,
+      isScoring: !!current.isScoring,
+      isReviewing: !!current.isReviewing,
+      currentReviewMove: current.currentReviewMove || 0,
+      deadStones: Array.from(current.deadStones || []),
+      isAIThinking: !!current.isAIThinking
     };
   }
 
@@ -250,13 +256,23 @@
       current.currentPlayer = previous.currentPlayer;
       current.lastMove = previous.lastMove ? [...previous.lastMove] : null;
       current.passCount = previous.passCount || 0;
+      current.gameOver = !!previous.gameOver;
+      current.isScoring = !!previous.isScoring;
+      current.isReviewing = !!previous.isReviewing;
+      current.currentReviewMove = previous.currentReviewMove || 0;
+      current.deadStones = new Set(previous.deadStones || []);
+      current.isAIThinking = !!previous.isAIThinking;
       current.moveHistory.pop();
     }
 
     return {
       ok: true,
       undoCount,
-      currentPlayer: current.currentPlayer
+      currentPlayer: current.currentPlayer,
+      gameOver: current.gameOver,
+      isScoring: current.isScoring,
+      isReviewing: current.isReviewing,
+      isAIThinking: current.isAIThinking
     };
   }
 
