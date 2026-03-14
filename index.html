@@ -911,7 +911,10 @@ function placeStone(x, y) {
 
   updateUI();
   const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking: willRequestAI ? true : isAIThinking });
+  const previousIsAIThinking = isAIThinking;
+  isAIThinking = willRequestAI ? true : previousIsAIThinking;
+  syncStatus();
+  isAIThinking = previousIsAIThinking;
   drawBoard();
   playSound('place');
   if (result.captured > 0) setTimeout(() => playSound('capture'), 80);
@@ -949,7 +952,10 @@ function doPass() {
 
   updateUI();
   const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking: willRequestAI ? true : isAIThinking });
+  const previousIsAIThinking = isAIThinking;
+  isAIThinking = willRequestAI ? true : previousIsAIThinking;
+  syncStatus();
+  isAIThinking = previousIsAIThinking;
   drawBoard();
 
   if (timerEnabled) switchTimer();
@@ -1612,7 +1618,7 @@ function requestAIMove() {
   }
   isAIThinking = true;
   syncGameStateStore();
-  setStatus('🤔 GnuGo 思考中...');
+  syncStatus();
   updateUI();
 
   // Use setTimeout to avoid blocking UI
@@ -1755,6 +1761,39 @@ function setStatus(msg) {
   GoUI.setStatus(msg);
 }
 
+function syncStatus(message = '') {
+  const state = { currentPlayer, gameOver, isScoring, isReviewing, isAIThinking };
+  if (typeof GoUI.syncStatus === 'function') {
+    GoUI.syncStatus(state, message);
+    return;
+  }
+  if (typeof GoUI.getStatusMessage === 'function') {
+    GoUI.setStatus(GoUI.getStatusMessage(state, message));
+    return;
+  }
+  if (message) {
+    GoUI.setStatus(message);
+    return;
+  }
+  if (gameOver) {
+    GoUI.setStatus('遊戲已結束');
+    return;
+  }
+  if (isScoring) {
+    GoUI.setStatus('請標記死子，然後確認結果');
+    return;
+  }
+  if (isReviewing) {
+    GoUI.setStatus('覆盤模式');
+    return;
+  }
+  if (isAIThinking) {
+    GoUI.setStatus('🤔 GnuGo 思考中...');
+    return;
+  }
+  GoUI.setStatus(`${currentPlayer === BLACK ? '黑' : '白'}方回合`);
+}
+
 function startNewGame() {
   // Read settings
   size = parseInt(document.getElementById('boardSize').value);
@@ -1804,7 +1843,7 @@ function startNewGame() {
   }
 
   updateUI();
-  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking }, gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '');
+  syncStatus(gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '');
   drawBoard();
   clearSave();
   saveGame();
@@ -1990,7 +2029,7 @@ function applyStateFromStore() {
   isScoring = s.isScoring;
   deadStones = new Set(s.deadStones || []);
   isAIThinking = !!s.isAIThinking;
-  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking });
+  syncStatus();
 }
 
 function saveGame() {
@@ -2028,7 +2067,7 @@ function loadGame() {
 
     updateUI();
     drawBoard();
-    GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking }, gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
+    syncStatus(gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
 
     // Preload GnuGo if needed
     if (gameMode === 'pvc' && !gameOver) {

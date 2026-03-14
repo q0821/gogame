@@ -1,0 +1,8 @@
+[2026-03-14 16:15 GMT+8]
+回歸測試發現：重新載入 http://127.0.0.1:8008/ 後，頁面上的 GoUI 物件存在，但 GoUI.syncStatus 與 GoUI.getStatusMessage 皆為 undefined。
+同時 statusMsg / mobileStatus 曾出現或殘留「🤔 GnuGo 思考中...」。
+本地 ui.js 檔案內容確認在 global.GoUI 匯出區段已包含 getStatusMessage 與 syncStatus。
+推論：瀏覽器實際載入的 ui.js 與工作目錄檔案可能不一致，或服務中的檔案仍為舊版，需檢查 index.html 服務來源與專案啟動目錄，再做小段修正與提交。
+[2026-03-14 16:18 GMT+8]
+進一步確認：瀏覽器 fetch('ui.js?t=...') 取得的最新腳本文字已包含 getStatusMessage、syncStatus、resizeCanvas 等匯出；但執行後 runtime 的 GoUI 仍只含 updateHUD、setStatus、updateReviewInfo、updateScoringDisplay、hideGuidanceTooltip、showGuidanceTooltipAt、drawStone、drawBoard。
+結論：問題不再是靜態資源來源，而更可能是執行期有舊物件殘留、腳本中止後保留舊版 GoUI，或初始化流程沒有完整重建全域 GoUI。下一步應檢查主控台是否有 ui.js 解析/執行錯誤，以及必要時對 ui.js 匯出方式做最小穩定化修正。
