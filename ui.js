@@ -4,32 +4,37 @@
   const WHITE = 2;
 
   function updateHUD(state) {
+    const normalizedState = {
+      ...state,
+      isAIThinking: !!state.isAIThinking && state.currentPlayer !== BLACK
+    };
+
     const turnEl = document.getElementById('turnDisplay');
-    if (state.gameOver) {
+    if (normalizedState.gameOver) {
       turnEl.textContent = '遊戲結束';
       turnEl.className = 'current-turn';
-    } else if (state.isAIThinking) {
+    } else if (normalizedState.isAIThinking) {
       turnEl.textContent = '🤔 AI 思考中...';
       turnEl.className = 'current-turn';
     } else {
-      turnEl.textContent = state.currentPlayer === BLACK ? '⚫ 黑方回合' : '⚪ 白方回合';
-      turnEl.className = 'current-turn ' + (state.currentPlayer === BLACK ? 'black' : 'white');
+      turnEl.textContent = normalizedState.currentPlayer === BLACK ? '⚫ 黑方回合' : '⚪ 白方回合';
+      turnEl.className = 'current-turn ' + (normalizedState.currentPlayer === BLACK ? 'black' : 'white');
     }
 
-    document.getElementById('blackCaptures').textContent = state.captures[BLACK];
-    document.getElementById('whiteCaptures').textContent = state.captures[WHITE];
-    document.getElementById('moveCount').textContent = state.moveHistory.length;
+    document.getElementById('blackCaptures').textContent = normalizedState.captures[BLACK];
+    document.getElementById('whiteCaptures').textContent = normalizedState.captures[WHITE];
+    document.getElementById('moveCount').textContent = normalizedState.moveHistory.length;
 
     const mt = document.getElementById('mobileTurn');
-    if (state.gameOver) {
+    if (normalizedState.gameOver) {
       mt.textContent = '遊戲結束';
       mt.className = 'turn-badge';
-    } else if (state.isAIThinking) {
+    } else if (normalizedState.isAIThinking) {
       mt.textContent = '🤔 AI 思考中';
       mt.className = 'turn-badge';
     } else {
-      mt.textContent = state.currentPlayer === BLACK ? '⚫ 黑方' : '⚪ 白方';
-      mt.className = 'turn-badge ' + (state.currentPlayer === BLACK ? 'black' : 'white');
+      mt.textContent = normalizedState.currentPlayer === BLACK ? '⚫ 黑方' : '⚪ 白方';
+      mt.className = 'turn-badge ' + (normalizedState.currentPlayer === BLACK ? 'black' : 'white');
     }
 
     document.getElementById('mobileBlackCap').textContent = state.captures[BLACK];
