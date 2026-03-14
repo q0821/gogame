@@ -2028,7 +2028,7 @@ function loadGame() {
 
     updateUI();
     drawBoard();
-    setStatus(gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
+    GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking }, gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
 
     // Preload GnuGo if needed
     if (gameMode === 'pvc' && !gameOver) {
