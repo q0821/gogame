@@ -1793,8 +1793,8 @@ function startNewGame() {
   }
 
   updateUI();
+  setStatus(gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '遊戲開始！');
   drawBoard();
-  setStatus('遊戲開始！');
   clearSave();
   saveGame();
 
