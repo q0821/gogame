@@ -1616,6 +1616,7 @@ function requestAIMove() {
       const move = GnuGoService.play(aiLevel, sgf, moveHistory.length, size).move;
       isAIThinking = false;
       syncGameStateStore();
+      updateUI();
       if (move) {
         placeStone(move[0], move[1]);
       } else {
