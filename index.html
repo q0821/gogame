@@ -1990,6 +1990,7 @@ function applyStateFromStore() {
   isScoring = s.isScoring;
   deadStones = new Set(s.deadStones || []);
   isAIThinking = !!s.isAIThinking;
+  GoUI.syncStatus({ currentPlayer, gameOver, isScoring, isReviewing, isAIThinking });
 }
 
 function saveGame() {

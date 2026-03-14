@@ -42,6 +42,19 @@
     document.getElementById('mobileStatus').textContent = message;
   }
 
+  function getStatusMessage(state, fallbackMessage = '') {
+    if (fallbackMessage) return fallbackMessage;
+    if (state.gameOver) return '遊戲已結束';
+    if (state.isScoring) return '請標記死子，然後確認結果';
+    if (state.isReviewing) return '覆盤模式';
+    if (state.isAIThinking) return '🤔 GnuGo 思考中...';
+    return `${state.currentPlayer === BLACK ? '黑' : '白'}方回合`;
+  }
+
+  function syncStatus(state, fallbackMessage = '') {
+    setStatus(getStatusMessage(state, fallbackMessage));
+  }
+
   function updateReviewInfo(state) {
     const info = document.getElementById('reviewInfo');
     if (state.currentReviewMove === 0) {
@@ -380,11 +393,13 @@
   global.GoUI = {
     updateHUD,
     setStatus,
+    getStatusMessage,
+    syncStatus,
     updateReviewInfo,
     updateScoringDisplay,
     hideGuidanceTooltip,
     showGuidanceTooltipAt,
+    resizeCanvas,
     drawStone,
     drawBoard
   };
-})(window);
