@@ -906,6 +906,7 @@ function placeStone(x, y) {
   clearGuidance();
 
   updateUI();
+  setStatus(`${currentPlayer === BLACK ? '黑' : '白'}方回合`);
   drawBoard();
   playSound('place');
   if (result.captured > 0) setTimeout(() => playSound('capture'), 80);
@@ -976,6 +977,7 @@ function doUndo() {
   updateUI();
   drawBoard();
   setStatus('已悔棋');
+  syncGameStateStore();
 
   if (guidanceEnabled && !gameOver) {
     setTimeout(() => requestGuidanceHints(), 150);
@@ -1597,11 +1599,13 @@ function requestAIMove() {
     initGnuGo().then(() => requestAIMove()).catch(() => {
       setStatus('⚠️ AI 引擎未就緒');
       isAIThinking = false;
+      syncGameStateStore();
+      updateUI();
     });
     return;
   }
-
   isAIThinking = true;
+  syncGameStateStore();
   setStatus('🤔 GnuGo 思考中...');
   updateUI();
 
@@ -1610,8 +1614,8 @@ function requestAIMove() {
     try {
       const sgf = buildSGF();
       const move = GnuGoService.play(aiLevel, sgf, moveHistory.length, size).move;
-
       isAIThinking = false;
+      syncGameStateStore();
       if (move) {
         placeStone(move[0], move[1]);
       } else {
@@ -1624,6 +1628,8 @@ function requestAIMove() {
     } catch (err) {
       console.error('GnuGo error:', err);
       isAIThinking = false;
+      syncGameStateStore();
+      updateUI();
       setStatus('⚠️ AI 出錯，請重新開始');
     }
   }, 50);
