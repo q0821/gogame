@@ -67,7 +67,11 @@ window.GnuGoService = (function () {
         gnugoModule = Module;
         gnugoReady = true;
         if (typeof setStatus === 'function') {
-          setStatus('GnuGo AI 引擎載入完成！');
+          const statusEl = typeof document !== 'undefined' ? document.getElementById('statusMsg') : null;
+          const currentStatus = statusEl?.textContent?.trim() || '';
+          if (!currentStatus || currentStatus === '請開始新遊戲' || currentStatus === '⏳ 載入 GnuGo AI 引擎...') {
+            setStatus('GnuGo AI 引擎載入完成！');
+          }
         }
       })
       .catch(err => {

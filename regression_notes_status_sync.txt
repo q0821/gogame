@@ -8,3 +8,5 @@
 結論：問題不再是靜態資源來源，而更可能是執行期有舊物件殘留、腳本中止後保留舊版 GoUI，或初始化流程沒有完整重建全域 GoUI。下一步應檢查主控台是否有 ui.js 解析/執行錯誤，以及必要時對 ui.js 匯出方式做最小穩定化修正。
 [2026-03-14 16:22 GMT+8]
 已定位根因之一：目前 http://127.0.0.1:8008/ 頁面受 service worker 控制，cache 名稱為 gogame-v1。瀏覽器 live DOM 的 index.html 內容仍是舊版，雖然 network fetch(no-store) 已可取得新版 index.html。這解釋了為何本地檔案與 curl 回應都已有 syncStatus 包裝，但頁面執行環境仍沒有該函式，也仍保留舊版 GoUI 物件行為。下一個最小段落應處理開發環境中的 service worker 快取干擾，避免回歸測試誤判。
+[2026-03-14 16:28 GMT+8]
+最新定位結果：GoUI 已成功掛載，syncStatus / getStatusMessage / local syncStatus wrapper 都存在；目前人機模式玩家執白時，moveCount 已變為 2，表示初始化流程與至少部分新局流程已執行，但 statusMsg 與 mobileStatus 仍停留在「GnuGo AI 引擎載入完成！」。搜尋全專案後，此訊息僅由 gnugo-service.js 在引擎 ready callback 中透過全域 setStatus() 寫入，推定為引擎完成事件於 UI 已同步回合後再次覆寫狀態列，下一個最小修正應限制該 ready 訊息不要覆蓋正式對局狀態，或改為只在尚未開局時顯示。
