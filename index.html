@@ -2014,12 +2014,6 @@ function loadGame() {
       document.getElementById('reviewBtn').style.display = 'block';
     }
 
-  isReviewing = false;
-  isScoring = false;
-  isAIThinking = false;
-  deadStones.clear();
-  syncGameStateStore();
-
     updateUI();
     drawBoard();
     setStatus(gameOver ? '遊戲已結束' : `已恢復棋局（第 ${moveHistory.length} 手）`);
