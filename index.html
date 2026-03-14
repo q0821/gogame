@@ -852,7 +852,35 @@ function showGuidanceTooltipAt(hint) {
 }
 
 // ==================== RENDERING ====================
+function getCurrentStateSnapshot() {
+  return {
+    size,
+    board,
+    currentPlayer,
+    captures,
+    moveHistory,
+    boardHistory,
+    koPoint,
+    passCount,
+    gameOver,
+    lastMove,
+    gameMode,
+    playerColor,
+    aiLevel,
+    timerEnabled,
+    timerSeconds,
+    gameRules,
+    komi,
+    isReviewing,
+    currentReviewMove,
+    isScoring,
+    deadStones,
+    isAIThinking
+  };
+}
+
 function buildBoardViewState() {
+  const state = getCurrentStateSnapshot();
   const displayBoard = isReviewing ? getReviewBoard() : board;
   const scoreData = isScoring ? calculateScore(board, deadStones) : null;
   const captureHints = showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking
@@ -861,25 +889,18 @@ function buildBoardViewState() {
   const lastMoveToShow = isReviewing ? getReviewLastMove() : lastMove;
 
   return {
-    size,
+    ...state,
     displayBoard,
     deadStones,
     lastMove: lastMoveToShow,
-    gameOver,
-    isAIThinking,
-    isReviewing,
-    isScoring,
     scoreData,
     analysisData,
     isAnalyzing,
-    currentReviewMove,
     showingHint,
     captureHints,
     guidanceEnabled,
     guidanceLoading,
-    guidanceHints,
-    currentPlayer,
-    playerColor
+    guidanceHints
   };
 }
 
@@ -1975,30 +1996,7 @@ window.addEventListener('resize', () => {
 const SAVE_KEY = 'gogame_state';
 
 function syncGameStateStore() {
-  GameState.sync({
-    size,
-    board,
-    currentPlayer,
-    captures,
-    moveHistory,
-    boardHistory,
-    koPoint,
-    passCount,
-    gameOver,
-    lastMove,
-    gameMode,
-    playerColor,
-    aiLevel,
-    timerEnabled,
-    timerSeconds,
-    gameRules,
-    komi,
-    isReviewing,
-    currentReviewMove,
-    isScoring,
-    deadStones,
-    isAIThinking
-  });
+  GameState.sync(getCurrentStateSnapshot());
 }
 
 function applyStateFromStore() {
