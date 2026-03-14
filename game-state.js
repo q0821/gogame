@@ -19,7 +19,13 @@
       koPoint: entry.koPoint ? [...entry.koPoint] : null,
       currentPlayer: entry.currentPlayer,
       lastMove: entry.lastMove ? [...entry.lastMove] : null,
-      passCount: entry.passCount || 0
+      passCount: entry.passCount || 0,
+      gameOver: !!entry.gameOver,
+      isScoring: !!entry.isScoring,
+      isReviewing: !!entry.isReviewing,
+      currentReviewMove: entry.currentReviewMove || 0,
+      deadStones: Array.from(entry.deadStones || []),
+      isAIThinking: !!entry.isAIThinking
     }));
   }
 
@@ -96,13 +102,24 @@
       gameRules: current.gameRules,
       komi: current.komi,
       timerSeconds: { 1: current.timerSeconds[BLACK], 2: current.timerSeconds[WHITE] },
+      isReviewing: current.isReviewing,
+      currentReviewMove: current.currentReviewMove,
+      isScoring: current.isScoring,
+      deadStones: Array.from(current.deadStones || []),
+      isAIThinking: current.isAIThinking,
       boardHistory: current.boardHistory.map(entry => ({
         board: cloneBoard(entry.board),
         captures: { 1: entry.captures[BLACK], 2: entry.captures[WHITE] },
         koPoint: entry.koPoint ? [...entry.koPoint] : null,
         currentPlayer: entry.currentPlayer,
         lastMove: entry.lastMove ? [...entry.lastMove] : null,
-        passCount: entry.passCount || 0
+        passCount: entry.passCount || 0,
+        gameOver: !!entry.gameOver,
+        isScoring: !!entry.isScoring,
+        isReviewing: !!entry.isReviewing,
+        currentReviewMove: entry.currentReviewMove || 0,
+        deadStones: Array.from(entry.deadStones || []),
+        isAIThinking: !!entry.isAIThinking
       }))
     };
   }
@@ -120,7 +137,13 @@
         koPoint: entry.koPoint || null,
         currentPlayer: entry.currentPlayer,
         lastMove: entry.lastMove || null,
-        passCount: entry.passCount || 0
+        passCount: entry.passCount || 0,
+        gameOver: !!entry.gameOver,
+        isScoring: !!entry.isScoring,
+        isReviewing: !!entry.isReviewing,
+        currentReviewMove: entry.currentReviewMove || 0,
+        deadStones: entry.deadStones || [],
+        isAIThinking: !!entry.isAIThinking
       })),
       koPoint: snapshot.koPoint,
       passCount: snapshot.passCount || 0,
@@ -136,11 +159,11 @@
       },
       gameRules: snapshot.gameRules || 'chinese',
       komi: snapshot.komi,
-      isReviewing: false,
-      currentReviewMove: 0,
-      isScoring: false,
-      deadStones: [],
-      isAIThinking: false
+      isReviewing: !!snapshot.isReviewing,
+      currentReviewMove: snapshot.currentReviewMove || 0,
+      isScoring: !!snapshot.isScoring,
+      deadStones: snapshot.deadStones || [],
+      isAIThinking: !!snapshot.isAIThinking
     });
     return getState();
   }
