@@ -852,44 +852,48 @@ function showGuidanceTooltipAt(hint) {
 }
 
 // ==================== RENDERING ====================
-function drawBoard() {
+function buildBoardViewState() {
   const displayBoard = isReviewing ? getReviewBoard() : board;
   const scoreData = isScoring ? calculateScore(board, deadStones) : null;
   const captureHints = showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking
-    ? getCaptureHints(displayBoard, currentPlayer)
+    ? getAllCaptureMoves(board, size, currentPlayer, koPoint)
     : [];
   const lastMoveToShow = isReviewing ? getReviewLastMove() : lastMove;
 
-  GoUI.drawBoard(
-    { canvas, ctx, padding, cellSize, starPoints: STAR_POINTS },
-    {
-      size,
-      board,
-      displayBoard,
-      deadStones,
-      lastMove: lastMoveToShow,
-      currentPlayer,
-      gameOver,
-      isAIThinking,
-      isReviewing,
-      isScoring,
-      hoverPos,
-      showingHint,
-      captureHints,
-      guidanceEnabled,
-      guidanceLoading,
-      guidanceHints,
-      currentReviewMove,
-      analysisData,
-      isAnalyzing,
-      scoreData
-    }
-  );
-  cellSize = Math.floor((canvas.width - padding * 2) / (size - 1));
+  return {
+    size,
+    displayBoard,
+    deadStones,
+    lastMove: lastMoveToShow,
+    gameOver,
+    isAIThinking,
+    isReviewing,
+    isScoring,
+    scoreData,
+    analysisData,
+    isAnalyzing,
+    currentReviewMove,
+    showingHint,
+    captureHints,
+    guidanceEnabled,
+    guidanceLoading,
+    guidanceHints,
+    currentPlayer,
+    playerColor
+  };
 }
 
-function drawStone(x, y, color, isDead) {
-  GoUI.drawStone({ ctx, padding, cellSize }, x, y, color, isDead);
+function drawBoard() {
+  GoUI.drawBoard(
+    {
+      canvas,
+      ctx,
+      padding,
+      cellSize,
+      starPoints
+    },
+    buildBoardViewState()
+  );
 }
 
 // ==================== GAME ACTIONS ====================
