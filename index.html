@@ -1842,8 +1842,11 @@ function startNewGame() {
     startTimer();
   }
 
+  const aiStartsGame = gameMode === 'pvc' && playerColor === WHITE && !gameOver;
+  isAIThinking = aiStartsGame;
+  syncGameStateStore();
   updateUI();
-  syncStatus(gameMode === 'pvc' && playerColor === WHITE ? '準備由 AI 先手...' : '');
+  syncStatus();
   drawBoard();
   clearSave();
   saveGame();
