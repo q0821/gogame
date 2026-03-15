@@ -501,6 +501,7 @@ button.danger:hover { background: #a04a4a; }
     </div>
     <canvas id="board"></canvas>
     <div class="guidance-tooltip" id="guidanceTooltip" style="display:none"></div>
+    <div id="guidanceLegend" style="display:none; width:100%; max-width:500px; margin-top:8px; padding:10px 12px; background:#16213e; border:1px solid #2a3a5e; border-radius:8px; color:#e0e0e0; font-size:13px; line-height:1.5;"></div>
     <div id="reviewBar" style="display:none; width:100%; max-width:500px; margin-top:6px;">
       <div class="review-controls">
         <button onclick="reviewGo(0)" title="回到開始">⏮</button>
@@ -846,14 +847,31 @@ function requestGuidanceHints() {
       guidanceHints = [];
     }
     guidanceLoading = false;
+    renderGuidanceLegend();
     drawBoard();
   }, 10);
+}
+
+function renderGuidanceLegend() {
+  const legend = document.getElementById('guidanceLegend');
+  if (!guidanceEnabled || guidanceHints.length === 0 || gameOver || isReviewing || isScoring) {
+    legend.style.display = 'none';
+    legend.innerHTML = '';
+    return;
+  }
+  const rankNames = ['⭐ 最佳', '🔵 次佳', '🟢 可考慮'];
+  legend.innerHTML = guidanceHints.map((hint) => {
+    const coord = `${String.fromCharCode(65 + hint.y)}${size - hint.x}`;
+    return `<div><strong>${rankNames[hint.rank] || '提示'}</strong>：${coord} — ${hint.label}</div>`;
+  }).join('');
+  legend.style.display = 'block';
 }
 
 function clearGuidance() {
   guidanceHints = [];
   guidanceTooltip = null;
   hideGuidanceTooltip();
+  renderGuidanceLegend();
 }
 
 function hideGuidanceTooltip() {
@@ -1931,22 +1949,12 @@ function handleBoardInteraction(e) {
     return;
   }
 
-  // Show/hide guidance tooltip when clicking on hint positions
-  if (guidanceEnabled && guidanceHints.length > 0 && board[x][y] === EMPTY) {
+  if (guidanceEnabled && guidanceHints.length > 0) {
     const hint = guidanceHints.find(h => h.x === x && h.y === y);
+    guidanceTooltip = hint || null;
     if (hint) {
-      if (guidanceTooltip && guidanceTooltip.x === x && guidanceTooltip.y === y) {
-        // Second click on same hint → close tooltip and place stone
-        guidanceTooltip = null;
-        hideGuidanceTooltip();
-      } else {
-        // First click on hint → show tooltip, don't place stone
-        guidanceTooltip = hint;
-        showGuidanceTooltipAt(hint);
-        return;
-      }
+      showGuidanceTooltipAt(hint);
     } else {
-      guidanceTooltip = null;
       hideGuidanceTooltip();
     }
   }
@@ -1997,6 +2005,7 @@ document.getElementById('guidanceToggle').addEventListener('change', (e) => {
     clearGuidance();
     drawBoard();
   }
+  renderGuidanceLegend();
 });
 
 document.getElementById('timerToggle').addEventListener('change', (e) => {
