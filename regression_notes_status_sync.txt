@@ -10,3 +10,25 @@
 已定位根因之一：目前 http://127.0.0.1:8008/ 頁面受 service worker 控制，cache 名稱為 gogame-v1。瀏覽器 live DOM 的 index.html 內容仍是舊版，雖然 network fetch(no-store) 已可取得新版 index.html。這解釋了為何本地檔案與 curl 回應都已有 syncStatus 包裝，但頁面執行環境仍沒有該函式，也仍保留舊版 GoUI 物件行為。下一個最小段落應處理開發環境中的 service worker 快取干擾，避免回歸測試誤判。
 [2026-03-14 16:28 GMT+8]
 最新定位結果：GoUI 已成功掛載，syncStatus / getStatusMessage / local syncStatus wrapper 都存在；目前人機模式玩家執白時，moveCount 已變為 2，表示初始化流程與至少部分新局流程已執行，但 statusMsg 與 mobileStatus 仍停留在「GnuGo AI 引擎載入完成！」。搜尋全專案後，此訊息僅由 gnugo-service.js 在引擎 ready callback 中透過全域 setStatus() 寫入，推定為引擎完成事件於 UI 已同步回合後再次覆寫狀態列，下一個最小修正應限制該 ready 訊息不要覆蓋正式對局狀態，或改為只在尚未開局時顯示。
+[2026-03-14 16:33 GMT+8]
+回歸測試摘要：
+1. PvC 玩家執白開局已恢復正常，立即顯示「🤔 GnuGo 思考中...」，約 900ms 後 AI 完成先手，狀態切回「白方回合」，moveCount=1。
+2. PvP 基本流程正常：startNewGame 後為黑方回合，黑方落子後切到白方回合，白方 Pass 後切回黑方回合。
+3. Undo 後狀態訊息顯示「已悔棋」，但 turnDisplay 為「⚪ 白方回合」，此為可接受的暫時提示，但之後是否應再同步回正式回合訊息仍可考慮。
+4. Save/Load 腳本回歸中，load 完成後最終頁面狀態回到黑方回合、moveCount=0，且 localStorage 內 gogame_save 不存在，表示目前 saveGame / loadGame / clearSave 之間仍可能有流程覆寫或測試腳本交互影響，這是下一個應優先釐清的回歸項目。
+[2026-03-14 16:36 GMT+8]
+清理與驗證進度：
+1. 已抽出 getCurrentStateSnapshot()，由 buildBoardViewState() 與 syncGameStateStore() 共用，減少 index.html 內重複組裝 state 的殘留協調邏輯。
+2. 該段已獨立提交並推送：0224fb9 Extract shared state snapshot helper。
+3. 重新載入後已確認頁面存在 getCurrentStateSnapshot 與 syncGameStateStore；基本新局狀態正常，status 可顯示「已恢復棋局（第 0 手）」或正常回合訊息，turnDisplay 與 currentPlayer 一致。
+4. 目前可進入最終整理交付；若後續還要繼續收斂 index.html，可優先處理 applyStateFromStore 的欄位逐一賦值與部分 UI reset 流程抽離。
+[2026-03-14 21:54 GMT+8]
+手機棋盤點擊偏移修正：
+1. 根因定位：原本 click / mousemove 座標直接以 getBoundingClientRect() 回傳的 CSS 像素計算，但棋盤格線間距使用的是 canvas 內部繪圖尺寸的 cellSize。當手機版 canvas 以 CSS 縮放顯示時，clientX/clientY 與 canvas.width/canvas.height 不再同尺度，導致落子位置明顯偏移。
+2. 修正內容：抽出 getBoardPositionFromEvent(e)，以 canvas.width / rect.width、canvas.height / rect.height 轉換事件座標，再統一供 mousemove、click、touchstart、touchend 使用；另外加入 touch 事件處理，使手機觸控與桌機點擊共用相同映射邏輯。
+3. 版本控制：已提交並推送 main，commit 為 a9aff8f Fix mobile board tap coordinate mapping。
+4. 驗證結果：重新載入後頁面已存在 getBoardPositionFromEvent()；在模擬 rect.width 為 canvas.width 一半的手機縮放場景下，目標 [4,4] 經換算後仍正確映射為 [4,4]，證明比例換算已修正原本偏移根因。
+[2026-03-14 22:09 GMT+8]
+使用者補充實機症狀：左上角已開始位移，且越往右下偏移越遠。這代表誤差不是固定平移，而是典型的比例失配；高度懷疑感應區使用的座標系與實際顯示棋盤尺寸不一致，需優先檢查 canvas CSS 呈現尺寸、內部 width/height、以及手機版 layout 是否有額外縮放或 overflow 導致 rect 與可視區不一致。
+[2026-03-15 02:59 GMT+8]
+最新驗證：目前 canvas 內部尺寸為 674x674，但 CSS 顯示尺寸為 720x720，widthRatio/heightRatio 約 0.936。這表示目前棋盤被額外放大顯示，感應座標若以內部尺寸回推，實機上會出現『左上角已偏、越往右下偏移越遠』的比例型誤差，與使用者描述完全一致。下一步需進一步修正 canvas CSS 寬度策略，避免其在某些 viewport 下超過實際繪圖尺寸，或改為在 resizeCanvas 時同步寫入 style.width/style.height 使顯示尺寸與內部尺寸一致。

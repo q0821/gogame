@@ -131,6 +131,8 @@
     const canvasSize = cellSize * (state.size - 1) + deps.padding * 2;
     deps.canvas.width = canvasSize;
     deps.canvas.height = canvasSize;
+    deps.canvas.style.width = `${canvasSize}px`;
+    deps.canvas.style.height = `${canvasSize}px`;
     return cellSize;
   }
 
