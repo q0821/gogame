@@ -393,6 +393,14 @@ button.danger:hover { background: #a04a4a; }
   .mobile-action-bar { display: flex; }
   .mobile-status { display: block; }
 }
+
+.version-footer {
+  width: 100%;
+  text-align: center;
+  color: #8899bb;
+  font-size: 12px;
+  padding: 10px 16px 16px;
+}
 </style>
 </head>
 <body>
@@ -595,6 +603,8 @@ button.danger:hover { background: #a04a4a; }
     <button class="primary" onclick="closeModal()">確定</button>
   </div>
 </div>
+
+<div class="version-footer" id="versionFooter">版本：dev</div>
 
 <script src="gnugo-loader.js"></script>
 <script src="gnugo-service.js"></script>
@@ -2188,6 +2198,9 @@ if ('serviceWorker' in navigator) {
 }
 
 // ==================== INIT ====================
+const APP_VERSION = 'v2026.03.15-1c2aaf3';
+document.getElementById('versionFooter').textContent = `版本：${APP_VERSION}`;
+
 if (!loadGame()) {
   startNewGame();
 }
