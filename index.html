@@ -1888,34 +1888,22 @@ function startNewGame() {
 }
 
 // ==================== EVENT HANDLERS ====================
-canvas.addEventListener('mousemove', (e) => {
+function getBoardPositionFromEvent(e) {
   const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
+  const point = e.touches?.[0] || e.changedTouches?.[0] || e;
+  const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+  const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+  const mx = (point.clientX - rect.left) * scaleX;
+  const my = (point.clientY - rect.top) * scaleY;
   const x = Math.round((my - padding) / cellSize);
   const y = Math.round((mx - padding) / cellSize);
+  return inBounds(x, y) ? [x, y] : null;
+}
 
-  if (inBounds(x, y)) {
-    hoverPos = [x, y];
-  } else {
-    hoverPos = null;
-  }
-  drawBoard();
-});
-
-canvas.addEventListener('mouseleave', () => {
-  hoverPos = null;
-  drawBoard();
-});
-
-canvas.addEventListener('click', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const x = Math.round((my - padding) / cellSize);
-  const y = Math.round((mx - padding) / cellSize);
-
-  if (!inBounds(x, y)) return;
+function handleBoardInteraction(e) {
+  const pos = getBoardPositionFromEvent(e);
+  if (!pos) return;
+  const [x, y] = pos;
 
   if (isScoring) {
     // Toggle dead stones
@@ -1952,7 +1940,29 @@ canvas.addEventListener('click', (e) => {
   }
 
   placeStone(x, y);
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  const pos = getBoardPositionFromEvent(e);
+  hoverPos = pos;
+  drawBoard();
 });
+
+canvas.addEventListener('mouseleave', () => {
+  hoverPos = null;
+  drawBoard();
+});
+
+canvas.addEventListener('click', handleBoardInteraction);
+canvas.addEventListener('touchstart', (e) => {
+  const pos = getBoardPositionFromEvent(e);
+  hoverPos = pos;
+  drawBoard();
+}, { passive: true });
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  handleBoardInteraction(e);
+}, { passive: false });
 
 // Settings visibility toggles
 document.getElementById('gameMode').addEventListener('change', (e) => {
