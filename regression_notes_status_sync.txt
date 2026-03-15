@@ -36,3 +36,5 @@
 最新驗證結果：重新載入後 canvas.style.width / style.height 仍為空字串，且 rectWidth 720 > canvasWidth 674，表示目前瀏覽器頁面尚未套用到最新 ui.js 的 style 同步邏輯。這解釋了為何使用者實機仍感受到比例型偏移；下一步需優先確認本地服務或手機端是否仍吃到舊快取版本，並直接比對實際送出的 ui.js 內容。
 [2026-03-15 03:26 GMT+8]
 手機版吃子提示初步定位：目前提示互動採『第一次點提示點顯示 tooltip，第二次再落子』的二段式流程，主入口在 handleBoardInteraction()。但畫布同時綁定了 touchend 與 click；在手機瀏覽器上，單次點擊有機會先觸發 touchend 再補發 click，造成同一提示點在單次觸控內被處理兩次，tooltip 可能剛顯示就被清掉，或直接進入第二段落子，因此使用者會感覺手機版提示沒有作用。下一步應將觸控與 click 去重，或在觸控裝置上改為 touchend 專責處理並抑制後續 click。
+[2026-03-15 03:40 GMT+8]
+新手導引偏移再檢查：在目前頁面直接量測，guidance 開啟前後 canvas.width/canvas.height 都是 674x674，但 getBoundingClientRect() 的 rectWidth/rectHeight 仍為 720x720，顯示尺寸大於內部繪圖尺寸的比例失配依舊存在。guidanceEnabled 切換本身沒有改變 cellSize、padding 或中心點映射公式；因此『開啟新手導引後又偏移』較可能是使用者在版本 v2026.03.15-1c2aaf3 上，實際仍跑到未含最新 ui.js style 同步修正的部署版本，或導引流程只是更容易暴露既有比例失配，而非導引覆蓋層本身直接改壞座標。
