@@ -38,3 +38,7 @@
 手機版吃子提示初步定位：目前提示互動採『第一次點提示點顯示 tooltip，第二次再落子』的二段式流程，主入口在 handleBoardInteraction()。但畫布同時綁定了 touchend 與 click；在手機瀏覽器上，單次點擊有機會先觸發 touchend 再補發 click，造成同一提示點在單次觸控內被處理兩次，tooltip 可能剛顯示就被清掉，或直接進入第二段落子，因此使用者會感覺手機版提示沒有作用。下一步應將觸控與 click 去重，或在觸控裝置上改為 touchend 專責處理並抑制後續 click。
 [2026-03-15 03:40 GMT+8]
 新手導引偏移再檢查：在目前頁面直接量測，guidance 開啟前後 canvas.width/canvas.height 都是 674x674，但 getBoundingClientRect() 的 rectWidth/rectHeight 仍為 720x720，顯示尺寸大於內部繪圖尺寸的比例失配依舊存在。guidanceEnabled 切換本身沒有改變 cellSize、padding 或中心點映射公式；因此『開啟新手導引後又偏移』較可能是使用者在版本 v2026.03.15-1c2aaf3 上，實際仍跑到未含最新 ui.js style 同步修正的部署版本，或導引流程只是更容易暴露既有比例失配，而非導引覆蓋層本身直接改壞座標。
+[2026-03-15 03:41 GMT+8]
+新手導引導致偏移修正：已移除 index.html 中 canvas 的固定 CSS 寬度規則 `width: min(100vw - 20px, 800px); height: auto;`，改由 ui.js 的 resizeCanvas() 單一來源控制內部尺寸與實際顯示尺寸。重新載入後量測結果為 canvasWidth=674、rectWidth=674、widthRatio=1，且 guidance 開啟後仍保持一致，證明先前『開啟新手導引後又偏移』實際根因是棋盤顯示尺寸被 CSS 額外放大，導引標記只是讓既有比例失配更明顯，而非導引功能本身改壞事件座標。
+[2026-03-15 04:49 GMT+8]
+新手導引進一步定位：guidanceHints 的資料座標與畫在棋盤上的提示圓點、以及同點反推回 getBoardPositionFromEvent() 的結果是一致的，未見 x/y 軸對調或部分提示點資料本身錯誤。然而 showGuidanceTooltipAt() 目前使用 canvas.offsetLeft/offsetTop 來定位 tooltip；在實際頁面量測中，tooltip 計算位置相對於真正的 canvas viewport 位置存在固定偏差（本次量測約 deltaLeft=-303、deltaTop=-74）。因此目前更可疑的不是『有些提示點資料錯』，而是 tooltip 在不同區域出現時會離棋盤真實點位很遠，使用者若依提示框附近再點第二下，就會感覺只有部分點正確、部分點錯誤。下一步應將 tooltip 定位改為基於 getBoundingClientRect() + scrollX/scrollY，而非 offsetLeft/offsetTop。

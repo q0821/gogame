@@ -105,8 +105,9 @@
     const rankNames = ['⭐ 最佳', '🔵 次佳', '🟢 可考慮'];
     const cx = deps.padding + hint.y * deps.cellSize;
     const cy = deps.padding + hint.x * deps.cellSize;
-    const left = deps.canvas.offsetLeft + cx;
-    const top = deps.canvas.offsetTop + cy - 35;
+    const rect = deps.canvas.getBoundingClientRect();
+    const left = rect.left + window.scrollX + cx;
+    const top = rect.top + window.scrollY + cy - 35;
     el.textContent = `${rankNames[hint.rank] || ''} — ${hint.label}（點擊落子）`;
     el.style.left = left + 'px';
     el.style.top = top + 'px';
