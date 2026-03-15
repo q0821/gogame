@@ -1957,13 +1957,19 @@ canvas.addEventListener('mouseleave', () => {
   drawBoard();
 });
 
-canvas.addEventListener('click', handleBoardInteraction);
+let lastTouchInteractionAt = 0;
+
+canvas.addEventListener('click', (e) => {
+  if (Date.now() - lastTouchInteractionAt < 500) return;
+  handleBoardInteraction(e);
+});
 canvas.addEventListener('touchstart', (e) => {
   const pos = getBoardPositionFromEvent(e);
   hoverPos = pos;
   drawBoard();
 }, { passive: true });
 canvas.addEventListener('touchend', (e) => {
+  lastTouchInteractionAt = Date.now();
   e.preventDefault();
   handleBoardInteraction(e);
 }, { passive: false });
