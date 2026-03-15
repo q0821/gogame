@@ -7,8 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="圍棋對弈">
-<link rel="manifest" href="manifest.json?v=dev">
-<link rel="apple-touch-icon" href="icon-192.png?v=dev">
+<link rel="manifest" href="manifest.json?v=v2026.03.15-9c49be6">
+<link rel="apple-touch-icon" href="icon-192.png?v=v2026.03.15-9c49be6">
 <title>圍棋對弈</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -605,11 +605,11 @@ button.danger:hover { background: #a04a4a; }
 
 <div class="version-footer" id="versionFooter">版本：dev</div>
 
-<script src="gnugo-loader.js?v=dev"></script>
-<script src="gnugo-service.js?v=dev"></script>
-<script src="rules.js?v=dev"></script>
-<script src="game-state.js?v=dev"></script>
-<script src="ui.js?v=dev"></script>
+<script src="gnugo-loader.js?v=v2026.03.15-9c49be6"></script>
+<script src="gnugo-service.js?v=v2026.03.15-9c49be6"></script>
+<script src="rules.js?v=v2026.03.15-9c49be6"></script>
+<script src="game-state.js?v=v2026.03.15-9c49be6"></script>
+<script src="ui.js?v=v2026.03.15-9c49be6"></script>
 <script>
 // ==================== CONSTANTS ====================
 const EMPTY = 0, BLACK = 1, WHITE = 2;
@@ -2200,8 +2200,8 @@ function closeSidebar() {
 }
 
 // ==================== PWA ====================
-const VERSION_INFO_URL = 'version.json?v=dev';
-const VERSION_FALLBACK = 'dev';
+const VERSION_INFO_URL = 'version.json?v=v2026.03.15-9c49be6';
+const VERSION_FALLBACK = 'v2026.03.15-9c49be6';
 
 async function applyAppVersion() {
   try {
@@ -2218,7 +2218,7 @@ async function applyAppVersion() {
 }
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js?v=dev').catch(() => {});
+  navigator.serviceWorker.register('sw.js?v=v2026.03.15-9c49be6').catch(() => {});
 }
 
 // ==================== INIT ====================

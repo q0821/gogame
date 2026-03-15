@@ -1,0 +1,7 @@
+{
+  "name": "gogame",
+  "private": true,
+  "scripts": {
+    "version:generate": "node generate-version.js"
+  }
+}
