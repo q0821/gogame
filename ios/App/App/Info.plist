@@ -3,9 +3,16 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
+	<string>zh-Hant</string>
 	<key>CFBundleDisplayName</key>
 	<string>弈樂</string>
+	<!-- App Store 商店頁的「語言」欄位是從 bundle 裡的 .lproj 推出來的；本專案只有
+	     Base.lproj，Apple 就改看 CFBundleLocalizations。原本兩者皆無、開發區域又是 en，
+	     導致一款全中文介面的 App 在商店頁被標成「語言：EN」。介面沒有英文版，故只列 zh-Hant。 -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hant</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
