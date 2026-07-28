@@ -162,6 +162,40 @@ export function restoreSnapshot(snapshot = {}) {
   return getState();
 }
 
+export function setAIThinking(value) {
+  const current = ensureState();
+  current.isAIThinking = !!value;
+  return current;
+}
+
+export function setAiLevel(level) {
+  const current = ensureState();
+  current.aiLevel = level;
+  return current;
+}
+
+export function setTimerSeconds(seconds = {}) {
+  const current = ensureState();
+  current.timerSeconds = {
+    [BLACK]: seconds[BLACK] ?? seconds[1] ?? current.timerSeconds[BLACK],
+    [WHITE]: seconds[WHITE] ?? seconds[2] ?? current.timerSeconds[WHITE]
+  };
+  return current;
+}
+
+export function setDeadStones(stones = []) {
+  const current = ensureState();
+  current.deadStones = new Set(stones);
+  return current;
+}
+
+export function markGameOver() {
+  const current = ensureState();
+  current.gameOver = true;
+  current.isAIThinking = false;
+  return current;
+}
+
 export function sync(partialState = {}) {
   const current = ensureState();
   if (Object.prototype.hasOwnProperty.call(partialState, 'board')) current.board = cloneBoard(partialState.board);
@@ -362,7 +396,8 @@ resetState();
 
 export const GameState = {
   createInitialState, resetState, getState, getSnapshot, restoreSnapshot,
-  sync, applyMove, applyPass, undo, startGame,
+  sync, setAIThinking, setAiLevel, setTimerSeconds, setDeadStones, markGameOver,
+  applyMove, applyPass, undo, startGame,
   beginScoring, cancelScoring, confirmScoring, toggleDeadGroup,
   enterReview, exitReview, reviewGo
 };

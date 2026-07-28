@@ -422,6 +422,61 @@ describe('getSnapshot / restoreSnapshot', () => {
     snap.board[4][4] = 0; // mutate snapshot
     expect(GameState.getState().board[4][4]).toBe(BLACK); // original unchanged
   });
+
+  test('restoreSnapshot 可載入缺少新欄位的舊資料', () => {
+    const oldSnapshot = {
+      size: 9,
+      board: GoRules.createBoard(9),
+      currentPlayer: BLACK,
+      captures: { 1: 0, 2: 0 },
+      moveHistory: []
+    };
+    GameState.restoreSnapshot(oldSnapshot);
+    const state = GameState.getState();
+    expect(state.timerSeconds).toEqual({ [BLACK]: 600, [WHITE]: 600 });
+    expect(state.isAIThinking).toBe(false);
+    expect(typeof state.deadStones.has).toBe('function');
+  });
+});
+
+describe('semantic state mutations', () => {
+  beforeEach(() => GameState.resetState({ size: 9, aiLevel: 4 }));
+
+  test('setAIThinking 只更新思考狀態', () => {
+    const boardBefore = GameState.getState().board;
+    GameState.setAIThinking(true);
+    expect(GameState.getState().isAIThinking).toBe(true);
+    expect(GameState.getState().board).toBe(boardBefore);
+  });
+
+  test('setAiLevel 更新目前棋局等級', () => {
+    GameState.setAiLevel(7);
+    expect(GameState.getState().aiLevel).toBe(7);
+  });
+
+  test('setTimerSeconds 複製輸入，外部後續修改不影響 store', () => {
+    const seconds = { [BLACK]: 123, [WHITE]: 456 };
+    GameState.setTimerSeconds(seconds);
+    seconds[BLACK] = 0;
+    expect(GameState.getState().timerSeconds).toEqual({ [BLACK]: 123, [WHITE]: 456 });
+  });
+
+  test('setDeadStones 建立自己的 Set', () => {
+    const stones = new Set([5, 10]);
+    GameState.setDeadStones(stones);
+    stones.add(20);
+    const stored = GameState.getState().deadStones;
+    expect(stored.has(5)).toBe(true);
+    expect(stored.has(10)).toBe(true);
+    expect(stored.has(20)).toBe(false);
+  });
+
+  test('markGameOver 結束棋局並釋放 AI 鎖', () => {
+    GameState.setAIThinking(true);
+    GameState.markGameOver();
+    expect(GameState.getState().gameOver).toBe(true);
+    expect(GameState.getState().isAIThinking).toBe(false);
+  });
 });
 
 // ─── sync ────────────────────────────────────────────────────────────────────
