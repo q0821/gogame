@@ -161,15 +161,8 @@ const app = {
   isGameBlocked, isGameBusy,
   placeStone: (...args) => placeStone(...args),
   doPass: (...args) => doPass(...args),
-  setAIThinking: (value) => {
-    GameState.setAIThinking(value);
-    applyStateFromStore();
-  },
-  toggleDeadGroup: (stones) => {
-    const result = GameState.toggleDeadGroup(stones);
-    applyStateFromStore();
-    return result;
-  },
+  setAIThinking: (value) => GameState.setAIThinking(value),
+  toggleDeadGroup: (stones) => GameState.toggleDeadGroup(stones),
   updateUI: () => updateUI(),
   updateScoringDisplay: () => updateScoringDisplay(),
   syncStatus: (...args) => syncStatus(...args),
@@ -494,8 +487,9 @@ function drawBoard() {
 
 // ==================== GAME ACTIONS ====================
 function placeStone(x, y) {
+  const before = getGoState();
   if (isGameBlocked()) return false;
-  if (isAIThinking && gameMode === 'pvc') return false;
+  if (before.isAIThinking && before.gameMode === 'pvc') return false;
 
   const result = GameState.applyMove(x, y);
   if (!result.ok) {
@@ -504,29 +498,25 @@ function placeStone(x, y) {
     playSfx('invalid-move');
     return false;
   }
-  applyStateFromStore();
 
   showingHint = false;
   suggestMove = null;
   liveOwnership = null;
 
+  const after = getGoState();
   updateUI();
-  const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  const previousIsAIThinking = isAIThinking;
-  isAIThinking = willRequestAI ? true : previousIsAIThinking;
-  syncStatus();
-  isAIThinking = previousIsAIThinking;
+  const willRequestAI = after.gameMode === 'pvc'
+    && after.currentPlayer !== after.playerColor
+    && !after.gameOver;
+  syncStatus(willRequestAI ? 'AI 思考中...' : '');
   drawBoard();
   playSfx('stone-place');
   if (result.captured > 0) setTimeout(() => playSfx('stone-capture'), 80);
-
-  if (timerEnabled) switchTimer();
+  if (after.timerEnabled) switchTimer();
   saveGame();
-
   if (willRequestAI) {
     setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
   }
-
   return true;
 }
 
@@ -539,7 +529,6 @@ function doPass() {
 
   const result = GameState.applyPass();
   if (!result.ok) return;
-  applyStateFromStore();
   playSfx('pass');
 
   if (result.endedByDoublePass) {
@@ -547,28 +536,31 @@ function doPass() {
     return;
   }
 
+  const state = getGoState();
   updateUI();
-  const willRequestAI = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
-  const previousIsAIThinking = isAIThinking;
-  isAIThinking = willRequestAI ? true : previousIsAIThinking;
+  const willRequestAI = state.gameMode === 'pvc'
+    && state.currentPlayer !== state.playerColor
+    && !state.gameOver;
   // In pvc, if after this pass it's the player's turn and no AI move is queued,
   // the AI was the one that just passed — guide the player on how to finish.
-  const aiJustPassed = gameMode === 'pvc' && !willRequestAI && currentPlayer === playerColor && !gameOver;
+  const aiJustPassed = state.gameMode === 'pvc'
+    && !willRequestAI
+    && state.currentPlayer === state.playerColor
+    && !state.gameOver;
   if (aiJustPassed) {
     setStatus('AI 虛手了 — 你也虛手即可數目，或按「申請數目」直接計算結果');
     showToast('電腦虛手（Pass）');   // 醒目提示，避免誤以為電腦還沒下
   } else {
-    syncStatus();
+    syncStatus(willRequestAI ? 'AI 思考中...' : '');
     // 虛手預警：這手是「單次虛手」（非雙虛手終局，上面已提早 return），提醒再一次就進數目。
     // AI 虛手已在上面分支顯示過提示，這裡只在非 AI 虛手時顯示，避免同一時刻兩個 toast。
-    if (!result.endedByDoublePass && passCount === 1) {
+    if (state.passCount === 1) {
       showToast('再虛手一次將進入數目');
     }
   }
-  isAIThinking = previousIsAIThinking;
   drawBoard();
 
-  if (timerEnabled) switchTimer();
+  if (state.timerEnabled) switchTimer();
   saveGame();
 
   if (willRequestAI) {
@@ -590,11 +582,12 @@ function doUndo() {
     setStatus('悔棋功能已關閉，可在設定中開啟');
     return;
   }
-  if (boardHistory.length === 0) return;
+  const state = getGoState();
+  if (state.boardHistory.length === 0) return;
 
-  const result = GameState.undo({ gameMode });
+  const result = GameState.undo({ gameMode: state.gameMode });
   if (!result.ok) return;
-  applyStateFromStore();
+  getGoState();
 
   updateUI();
   syncStatus();
@@ -605,24 +598,26 @@ function doUndo() {
 
 function doResign() {
   // 同 doUndo()：AI 回合中（isAIThinking=true）認輸會在 katagoMove() 仍在跑時就把
-  // gameOver 設為 true，該 promise 事後 resolve 時 aiController 仍會嘗試 applyStateFromStore／
+  // gameOver 設為 true，該 promise 事後 resolve 時 aiController 仍會嘗試同步舊鏡像／
   // placeStone，對已結束的對局動手。isGameBusy() 才會把 isAIThinking 一併擋下。
   if (isGameBusy()) return;
   // 認輸不可逆且會影響自適應等級，先確認避免誤觸（比照「重新開始」的既有做法）。
   if (!window.confirm('確定要認輸嗎？這局將以對方獲勝結束。')) return;
-  const winner = opponent(currentPlayer);
+  const state = getGoState();
+  const winner = opponent(state.currentPlayer);
   // 認輸視為大敗/大勝：認輸者的對手贏。以人類視角換算 margin 給自適應難度。
-  const humanWon = (winner === playerColor);
+  const humanWon = (winner === state.playerColor);
   applyResultToLevel(humanWon ? 30 : -30);
-  endGame(`${winner === BLACK ? '黑方' : '白方'}勝`, `${currentPlayer === BLACK ? '黑' : '白'}方認輸`, outcomeFor(winner));
+  endGame(`${winner === BLACK ? '黑方' : '白方'}勝`, `${state.currentPlayer === BLACK ? '黑' : '白'}方認輸`, outcomeFor(winner));
 }
 
 // 依對局模式與人類執子換算終局音效結果：PvP 一律視為「勝」音（無輸家視角）；
 // PvC 依人類是否為贏家算 win/lose，winnerColor 為 null 代表和局。
 function outcomeFor(winnerColor) {
-  if (gameMode !== 'pvc') return 'win';
+  const state = getGoState();
+  if (state.gameMode !== 'pvc') return 'win';
   if (winnerColor === null) return 'draw';
-  return winnerColor === playerColor ? 'win' : 'lose';
+  return winnerColor === state.playerColor ? 'win' : 'lose';
 }
 
 // ——— 自適應難度（電腦等級依戰績升降） ———
@@ -634,8 +629,8 @@ function loadAiLevel() {
   return MIN_LEVEL; // 預設從最低級開始往上爬
 }
 
-function saveAiLevel() {
-  try { localStorage.setItem(AI_LEVEL_KEY, String(aiLevel)); } catch (_) {}
+function saveAiLevel(level) {
+  try { localStorage.setItem(AI_LEVEL_KEY, String(level)); } catch (_) {}
 }
 
 function loadAiLevelMode() {
@@ -651,8 +646,9 @@ function saveAiLevelMode() {
 
 // 更新設定面板的「電腦等級」顯示。
 function updateAiLevelDisplay() {
+  const level = getGoState().aiLevel;
   const el = document.getElementById('aiLevelDisplay');
-  if (el) el.textContent = `第 ${aiLevel} 級（${kyuLabel(aiLevel)}）`;
+  if (el) el.textContent = `第 ${level} 級（${kyuLabel(level)}）`;
 }
 
 // 初始化「電腦等級」設定控件：填手動選級下拉（1..MAX 級＋約當級位）、還原持久化的
@@ -671,7 +667,8 @@ function initAiLevelControls() {
   // 完整版旗標若已失效（換裝置/尚未恢復購買），持久化的手動模式退回自動。
   if (aiLevelMode === 'manual' && !premiumUnlocked()) { aiLevelMode = 'auto'; saveAiLevelMode(); }
   modeSel.value = aiLevelMode;
-  manualSel.value = String(Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, aiLevel)));
+  const level = getGoState().aiLevel;
+  manualSel.value = String(Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, level)));
 
   const syncVisibility = () => {
     const manual = modeSel.value === 'manual';
@@ -693,30 +690,36 @@ let _pendingLevelMsg = null; // 升降訊息，於結束彈窗顯示
 
 // 依「人類視角勝負目數」調整等級，回傳是否有變動，並備妥明示訊息。
 function applyResultToLevel(humanMargin) {
-  if (gameMode !== 'pvc') return; // 只在人機對局調整
-  const before = aiLevel;
-  const r = nextLevelForMode(before, humanMargin, aiLevelMode);
-  aiLevel = r.level;
-  saveAiLevel();
+  const state = getGoState();
+  if (state.gameMode !== 'pvc') return; // 只在人機對局調整
+  const result = nextLevelForMode(state.aiLevel, humanMargin, aiLevelMode);
+  GameState.setAiLevel(result.level);
+  saveAiLevel(result.level);
   updateAiLevelDisplay();
-  if (r.change === 'up') _pendingLevelMsg = `你贏得漂亮！電腦升到第 ${aiLevel} 級（${kyuLabel(aiLevel)}）`;
-  else if (r.change === 'down') _pendingLevelMsg = `電腦降到第 ${aiLevel} 級（${kyuLabel(aiLevel)}），調整步調再來`;
-  else if (aiLevelMode === 'manual') _pendingLevelMsg = `電腦固定第 ${aiLevel} 級（${kyuLabel(aiLevel)}，手動選級）`;
-  else _pendingLevelMsg = `電腦維持第 ${aiLevel} 級（${kyuLabel(aiLevel)}）`;
+  if (result.change === 'up') {
+    _pendingLevelMsg = `你贏得漂亮！電腦升到第 ${result.level} 級（${kyuLabel(result.level)}）`;
+  } else if (result.change === 'down') {
+    _pendingLevelMsg = `電腦降到第 ${result.level} 級（${kyuLabel(result.level)}），調整步調再來`;
+  } else if (aiLevelMode === 'manual') {
+    _pendingLevelMsg = `電腦固定第 ${result.level} 級（${kyuLabel(result.level)}，手動選級）`;
+  } else {
+    _pendingLevelMsg = `電腦維持第 ${result.level} 級（${kyuLabel(result.level)}）`;
+  }
 }
 
 function resetAiLevel() {
-  aiLevel = MIN_LEVEL;
-  saveAiLevel();
+  GameState.setAiLevel(MIN_LEVEL);
+  saveAiLevel(MIN_LEVEL);
   updateAiLevelDisplay();
-  setStatus(`已重設：電腦回到第 ${aiLevel} 級（${kyuLabel(aiLevel)}）`);
+  setStatus(`已重設：電腦回到第 ${MIN_LEVEL} 級（${kyuLabel(MIN_LEVEL)}）`);
 }
 
 // End the game by counting territory, without needing the double-pass dance.
 // Lets the player settle the result and see who won by how many points.
 function finishGame() {
   if (isGameBusy()) return;
-  if (moveHistory.length === 0) {
+  const state = getGoState();
+  if (state.moveHistory.length === 0) {
     setStatus('還沒有落子，無法數目');
     return;
   }
@@ -726,17 +729,18 @@ function finishGame() {
 // 用 KataGo 的 ownership 推導死子：盤上某顆棋子若所在點被對方明確佔有（|own| 夠大且歸對方），
 // 即判為死子。ownership：+1 黑佔 / -1 白佔，黑視角，index = row*size+col。
 function deadStonesFromOwnership(ownership) {
+  const state = getGoState();
   const dead = new Set();
   if (!ownership) return dead;
   const TH = 0.5; // 歸屬信心門檻；> 0.5 視為該方明確佔有
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      const v = board[x][y];
+  for (let x = 0; x < state.size; x++) {
+    for (let y = 0; y < state.size; y++) {
+      const v = state.board[x][y];
       if (v === EMPTY) continue;
-      const own = ownership[x * size + y]; // +黑 / -白
+      const own = ownership[x * state.size + y]; // +黑 / -白
       // 黑子落在白佔區 → 黑子死；白子落在黑佔區 → 白子死
-      if (v === BLACK && own < -TH) dead.add(x * size + y);
-      else if (v === WHITE && own > TH) dead.add(x * size + y);
+      if (v === BLACK && own < -TH) dead.add(x * state.size + y);
+      else if (v === WHITE && own > TH) dead.add(x * state.size + y);
     }
   }
   return dead;
@@ -744,7 +748,7 @@ function deadStonesFromOwnership(ownership) {
 
 async function endGameByScoring() {
   GameState.beginScoring();
-  applyStateFromStore();
+  const scoringState = getGoState();
   stopTimer();
   document.getElementById('scoringPanel').style.display = 'block';
   // 先用舊估算顯示「計算中」基準，再用 KataGo ownership 覆蓋成準確結果。
@@ -754,19 +758,31 @@ async function endGameByScoring() {
 
   try {
     const { ownership } = await KataGo.scoreGame({
-      board, size, currentPlayer, moveHistory, komi, gameRules, onStatus: setStatus,
+      board: scoringState.board,
+      size: scoringState.size,
+      currentPlayer: scoringState.currentPlayer,
+      moveHistory: scoringState.moveHistory,
+      komi: scoringState.komi,
+      gameRules: scoringState.gameRules,
+      onStatus: setStatus,
     });
+    const latest = getGoState();
+    if (!latest.isScoring) return;
     if (ownership) {
       const dead = deadStonesFromOwnership(ownership);
-      GameState.sync({ deadStones: Array.from(dead) });
-      applyStateFromStore();
+      GameState.setDeadStones(dead);
+      getGoState();
       _lastOwnership = ownership;
     }
   } catch (err) {
+    const latest = getGoState();
+    if (!latest.isScoring) return;
     console.error('KataGo scoring failed, fallback to JS estimate:', err);
     // 失敗則沿用 beginScoring 的純 JS 估算（已在 deadStones 內）
   }
 
+  const latest = getGoState();
+  if (!latest.isScoring) return;
   updateScoringDisplay();
   applyUnfinishedWarning();
   drawBoard();
@@ -776,7 +792,15 @@ let _lastOwnership = null;
 
 // 數目結果置中彈窗：算完直接彈在畫面中央（結果只放下方 panel 會被沒捲動的人漏看）。
 function showScoringResultModal() {
-  const score = calculateScore(board, size, deadStones, captures, gameRules, komi);
+  const state = getGoState();
+  const score = calculateScore(
+    state.board,
+    state.size,
+    state.deadStones,
+    state.captures,
+    state.gameRules,
+    state.komi
+  );
   const diff = score.black - score.white;
   const resEl = document.getElementById('scoringModalResult');
   const detEl = document.getElementById('scoringModalDetail');
@@ -785,10 +809,10 @@ function showScoringResultModal() {
     resEl.textContent = diff > 0 ? `黑勝 ${diff.toFixed(1)} 目`
       : diff < 0 ? `白勝 ${(-diff).toFixed(1)} 目` : '和局';
   }
-  if (detEl) detEl.textContent = `黑 ${score.black.toFixed(1)}・白 ${score.white.toFixed(1)}（白含貼目 ${komi}）`;
+  if (detEl) detEl.textContent = `黑 ${score.black.toFixed(1)}・白 ${score.white.toFixed(1)}（白含貼目 ${state.komi}）`;
   if (warnEl) {
     const neutral = countNeutralEmpty(score);
-    if (neutral > size) {
+    if (neutral > state.size) {
       warnEl.textContent = `尚未終局？還有 ${neutral} 個雙方交界的空點未圍定，目前結果可能不準，建議按「繼續對弈」收完官子再數。`;
       warnEl.style.display = 'block';
     } else {
@@ -806,17 +830,26 @@ function adjustDeadStones() {
 }
 
 function updateScoringDisplay() {
-  const score = calculateScore(board, size, deadStones, captures, gameRules, komi);
-  GoUI.updateScoringDisplay({ gameRules, komi }, score);
+  const state = getGoState();
+  const score = calculateScore(
+    state.board,
+    state.size,
+    state.deadStones,
+    state.captures,
+    state.gameRules,
+    state.komi
+  );
+  GoUI.updateScoringDisplay({ gameRules: state.gameRules, komi: state.komi }, score);
 }
 
 // 數「中立空點」＝空且不屬任一方領地的點。多 → 邊界沒收完、尚未終局。純規則。
 function countNeutralEmpty(score) {
+  const state = getGoState();
   if (!score || !score.territory) return 0;
   let n = 0;
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) {
-      if (board[x][y] === EMPTY && score.territory[x][y] === 0) n++;
+  for (let x = 0; x < state.size; x++) {
+    for (let y = 0; y < state.size; y++) {
+      if (state.board[x][y] === EMPTY && score.territory[x][y] === 0) n++;
     }
   }
   return n;
@@ -824,12 +857,20 @@ function countNeutralEmpty(score) {
 
 // 數目時若還有很多中立空點，提示尚未終局（避免拿過早的比分當定局）。
 function applyUnfinishedWarning() {
-  const score = calculateScore(board, size, deadStones, captures, gameRules, komi);
+  const state = getGoState();
+  const score = calculateScore(
+    state.board,
+    state.size,
+    state.deadStones,
+    state.captures,
+    state.gameRules,
+    state.komi
+  );
   const neutral = countNeutralEmpty(score);
   const warnEl = document.getElementById('scoringWarn');
   const mHint = document.getElementById('mobileScoringHint');
   const defaultHint = '已自動估算死子；點棋盤上的死子可修正';
-  if (neutral > size) {
+  if (neutral > state.size) {
     const msg = `尚未終局？還有 ${neutral} 個雙方交界的空點未圍定，建議先收完官子再數目，目前結果可能不準。`;
     if (warnEl) { warnEl.textContent = msg; warnEl.style.display = 'block'; }
     if (mHint) mHint.textContent = msg;
@@ -842,16 +883,24 @@ function applyUnfinishedWarning() {
 }
 
 function confirmScoring() {
+  const state = getGoState();
   document.getElementById('scoringModal')?.classList.remove('show');
-  const score = calculateScore(board, size, deadStones, captures, gameRules, komi);
+  const score = calculateScore(
+    state.board,
+    state.size,
+    state.deadStones,
+    state.captures,
+    state.gameRules,
+    state.komi
+  );
   const diff = score.black - score.white;
   const winner = diff > 0 ? '黑方' : '白方';
-  const detail = `黑 ${score.black.toFixed(1)} vs 白 ${score.white.toFixed(1)}（含貼目 ${komi}）`;
+  const detail = `黑 ${score.black.toFixed(1)} vs 白 ${score.white.toFixed(1)}（含貼目 ${state.komi}）`;
   // 人類視角的勝負目數（人執 playerColor）：正=人贏 N 目、負=人輸 N 目。
-  const humanMargin = playerColor === BLACK ? diff : -diff;
+  const humanMargin = state.playerColor === BLACK ? diff : -diff;
   applyResultToLevel(humanMargin);
   GameState.confirmScoring();
-  applyStateFromStore();
+  getGoState();
   document.getElementById('scoringPanel').style.display = 'none';
   const winnerColor = diff > 0 ? BLACK : diff < 0 ? WHITE : null;
   endGame(`${winner}勝`, detail, outcomeFor(winnerColor));
@@ -860,14 +909,15 @@ function confirmScoring() {
 function cancelScoring() {
   document.getElementById('scoringModal')?.classList.remove('show');
   GameState.cancelScoring();
-  applyStateFromStore();
+  getGoState();
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目，繼續對弈');
   drawBoard();
 }
 
 function endGame(title, detail, outcome) {
-  gameOver = true;
+  GameState.markGameOver();
+  const state = getGoState();
   stopTimer();
   document.getElementById('modalTitle').textContent = '遊戲結束';
   document.getElementById('modalResult').textContent = title;
@@ -875,7 +925,7 @@ function endGame(title, detail, outcome) {
   // 客觀對局摘要（純規則，不做形勢/勝率臆測）
   const sm = document.getElementById('modalSummary');
   if (sm) {
-    const s = GoReview.summarizeGame(moveHistory, size);
+    const s = GoReview.summarizeGame(state.moveHistory, state.size);
     let txt = `全 ${s.totalMoves} 手・黑提 ${s.blackCaptured} 子、白提 ${s.whiteCaptured} 子`;
     if (s.biggest) {
       txt += `・最大一次：第 ${s.biggest.moveNumber} 手${s.biggest.byPlayer === BLACK ? '黑' : '白'}提 ${s.biggest.count} 子`;
@@ -891,7 +941,7 @@ function endGame(title, detail, outcome) {
   // 累計戰績：只記 pvc（含認輸/超時/數目，皆經此函式），pvp 該行清空。
   const modalStats = document.getElementById('modalStats');
   if (modalStats) {
-    if (gameMode === 'pvc') {
+    if (state.gameMode === 'pvc') {
       const statsOutcome = outcome === 'lose' ? 'loss' : outcome; // outcome 為 'win'|'lose'|'draw'
       const st = recordGame(loadStats(), 'go', statsOutcome);
       saveStats(st);
@@ -933,7 +983,8 @@ function closeModal() {
 // ==================== TIMER ====================
 function _timerOnTimeout(losingPlayer) {
   const winner = opponent(losingPlayer);
-  applyResultToLevel(winner === playerColor ? 30 : -30);
+  const state = getGoState();
+  applyResultToLevel(winner === state.playerColor ? 30 : -30);
   endGame(`${winner === BLACK ? '黑方' : '白方'}勝`, `${losingPlayer === BLACK ? '黑' : '白'}方超時`, outcomeFor(winner));
 }
 
@@ -977,7 +1028,7 @@ function enterReview() {
   if (!document.getElementById('reviewToggle').checked) return;
   const result = GameState.enterReview();
   if (!result.ok) return;
-  applyStateFromStore();
+  getGoState();
   document.getElementById('reviewBar').style.display = 'block';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'block';
@@ -988,17 +1039,17 @@ function enterReview() {
 function exitReview() {
   const result = GameState.exitReview();
   if (!result.ok) return;
-  applyStateFromStore();
+  const state = getGoState();
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
-  if (gameOver) document.getElementById('reviewBtn').style.display = 'block';
+  if (state.gameOver) document.getElementById('reviewBtn').style.display = 'block';
   drawBoard();
 }
 
 function reviewGo(n) {
   const result = GameState.reviewGo(n);
   if (!result.ok) return;
-  applyStateFromStore();
+  getGoState();
   updateReviewInfo();
   drawBoard();
 }
@@ -1050,7 +1101,8 @@ function toggleReviewOwnership() {
 
 // 用 KataGo 誠實逐手分析本局（opt-in；低 visits；黑方觀點，不宣稱精確目數）。
 async function analyzeReview() {
-  if (!isReviewing || reviewAnalyzing) return;
+  const state = getGoState();
+  if (!state.isReviewing || reviewAnalyzing) return;
   if (!premiumUnlocked() && remainingQuota(localStorage, 'analysis', FREE_DAILY_ANALYSIS, todayStr()) <= 0) {
     openPremiumModal('免費版每天可用 1 次「分析本局」，今天的額度已用完。');
     return;
@@ -1058,20 +1110,30 @@ async function analyzeReview() {
   reviewAnalyzing = true;
   const btn = document.getElementById('analyzeReviewBtn');
   if (btn) btn.disabled = true;
-  const N = moveHistory.length;
-  const results = new Array(N + 1).fill(null);
   try {
     await KataGo.ensureReady(setStatus);
+    const readyState = getGoState();
+    if (!readyState.isReviewing) return;
+    const N = readyState.moveHistory.length;
+    const results = new Array(N + 1).fill(null);
     for (let k = 0; k <= N; k++) {
+      const analysisState = getGoState();
+      if (!analysisState.isReviewing) return;
       setStatus(`分析中… ${k}/${N}`);
-      const b = GoReview.getReviewBoard(moveHistory, k, size);
+      const b = GoReview.getReviewBoard(analysisState.moveHistory, k, analysisState.size);
       const player = (k % 2 === 0) ? BLACK : WHITE; // 第 k 手後輪到誰
       const a = await KataGo.evaluate({
-        board: b, size, currentPlayer: player,
-        moveHistory: moveHistory.slice(0, k), komi, gameRules,
+        board: b,
+        size: analysisState.size,
+        currentPlayer: player,
+        moveHistory: analysisState.moveHistory.slice(0, k),
+        komi: analysisState.komi,
+        gameRules: analysisState.gameRules,
       }, { visits: 12 });
+      if (!getGoState().isReviewing) return;
       results[k] = { wr: a.rootWinRate, lead: a.rootScoreLead, ownership: a.ownership };
     }
+    if (!getGoState().isReviewing) return;
     reviewAnalysis = results;
     if (!premiumUnlocked()) consumeQuota(localStorage, 'analysis', todayStr());
     setStatus('分析完成 — 逐手切換看勝率與失分，或點曲線跳手');
@@ -1081,6 +1143,7 @@ async function analyzeReview() {
     if (ob) ob.style.display = '';
     updateReviewInfo();
   } catch (err) {
+    if (!getGoState().isReviewing) return;
     console.error('Review analysis error:', err);
     setStatus('分析失敗：' + (err && err.message ? err.message : String(err)));
   } finally {
@@ -1102,14 +1165,16 @@ function onWinrateGraphClick(e) {
 // Branch the game from the current review position so the player can try a
 // different move and keep playing the AI, without losing the original record.
 function replayFromHere() {
-  if (!isReviewing) return;
-  const cut = currentReviewMove;
+  const state = getGoState();
+  if (!state.isReviewing) return;
+  const cut = state.currentReviewMove;
   savedOriginalGame = GameState.getSnapshot();
   const original = savedOriginalGame;
   const movesToReplay = original.moveHistory.slice(0, cut);
   const sideToMove = (cut % 2 === 0) ? BLACK : WHITE;
 
   GameState.exitReview();
+  getGoState();
   GameState.startGame({
     size: original.size,
     gameMode: 'pvc',
@@ -1120,11 +1185,14 @@ function replayFromHere() {
     gameRules: original.gameRules,
     komi: original.komi,
   });
+  getGoState();
   for (const m of movesToReplay) {
+    getGoState();
     if (m.pass) GameState.applyPass();
     else GameState.applyMove(m.x, m.y);
+    getGoState();
   }
-  applyStateFromStore();
+  const replayState = getGoState();
 
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
@@ -1135,7 +1203,11 @@ function replayFromHere() {
   setStatus('練習模式：換個下法試試，再與 AI 繼續對弈');
   updateUI();
   drawBoard();
-  if (gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver) {
+  if (
+    replayState.gameMode === 'pvc'
+    && replayState.currentPlayer !== replayState.playerColor
+    && !replayState.gameOver
+  ) {
     setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
   }
 }
@@ -1144,9 +1216,9 @@ function returnToOriginal() {
   if (!savedOriginalGame) return;
   GameState.restoreSnapshot(savedOriginalGame);
   savedOriginalGame = null;
-  applyStateFromStore();
+  const state = getGoState();
   document.getElementById('returnOriginalBtn').style.display = 'none';
-  if (gameOver && document.getElementById('reviewToggle').checked) {
+  if (state.gameOver && document.getElementById('reviewToggle').checked) {
     document.getElementById('reviewBtn').style.display = 'block';
   }
   setStatus('已返回原始棋譜');
@@ -1192,7 +1264,7 @@ function startNewGame() {
   if (aiLevelMode === 'manual') {
     const lv = parseInt(document.getElementById('aiManualLevel')?.value);
     aiLevel = levelConfig(Number.isFinite(lv) ? lv : MIN_LEVEL).level;
-    saveAiLevel();
+    saveAiLevel(aiLevel);
   } else {
     aiLevel = loadAiLevel();
   }
@@ -1285,7 +1357,8 @@ function applyStateFromStore() {
 }
 
 function saveGame() {
-  if (isReviewing || isScoring) return;
+  const state = getGoState();
+  if (state.isReviewing || state.isScoring) return;
   GameState.sync({ timerSeconds });
   const snapshot = GameState.getSnapshot();
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot)); } catch(e) {}
