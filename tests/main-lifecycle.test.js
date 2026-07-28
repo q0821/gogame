@@ -438,6 +438,62 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
+  test('雙虛手進入數目後，UI 層收到的回合與手數等於 GameState 實際值', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0); // 黑第 1 手
+    sandbox.GameState.applyMove(1, 0); // 白第 2 手
+
+    sandbox.ctx.doPass(); // 黑虛手（第 3 手）→ UI 收到「輪白、3 手」
+    sandbox.ctx.doPass(); // 白虛手（第 4 手）→ 雙虛手進入數目，此路徑不經 doPass() 的 updateUI()
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    // applyPass() 已換手並多記一手；進入數目那一刻若沒把最新狀態推給資訊列，
+    // #mobileTurn 會停在「白方」、#mobileMoveCount 停在 3，直到取消數目或終局才更新。
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiCurrentPlayer: 1,
+      uiMoveCount: 4,
+      stateCurrentPlayer: 1,
+      stateMoveCount: 4
+    });
+    // 數目期間沒有 AI 在算下一手，思考遮罩不該被打開。
+    expect(sandbox.elements.aiThinkingOverlay.style.display).toBe('none');
+  });
+
+  test('「申請數目」進入數目後，UI 層收到的值與 GameState 一致（該路徑不動 currentPlayer）', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0); // 黑第 1 手
+    sandbox.GameState.applyMove(1, 0); // 白第 2 手
+    sandbox.ctx.doPass();              // 黑虛手（第 3 手）→ UI 收到「輪白、3 手」
+
+    sandbox.ctx.finishGame();          // 申請數目：不動 currentPlayer、不加手數
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiCurrentPlayer: 2,
+      uiMoveCount: 3,
+      stateCurrentPlayer: 2,
+      stateMoveCount: 3
+    });
+  });
+
   test('計時對局後開一局不計時新局，不會把上一局剩餘秒數帶進新局', () => {
     const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
     startTimedGame(sandbox, { minutes: 5 });

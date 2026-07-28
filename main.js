@@ -739,6 +739,10 @@ async function endGameByScoring() {
   GameState.beginScoring();
   const scoringState = getGoState();
   document.getElementById('scoringPanel').style.display = 'block';
+  // 進入數目那一刻就把最新狀態推給資訊列。雙虛手路徑的 applyPass() 已換手並多記一手，
+  // 不推的話 #mobileTurn 與手數會停在虛手前的陳舊值（實測：顯示白方、3 手，實際黑方、4 手）。
+  // 必須排在第一個 await（KataGo.scoreGame）之前，否則整段數目運算期間畫面都還是舊值。
+  updateUI();
   // 先用舊估算顯示「計算中」基準，再用 KataGo ownership 覆蓋成準確結果。
   updateScoringDisplay();
   setStatus('AI 數目中…');
