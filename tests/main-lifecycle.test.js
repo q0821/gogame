@@ -293,4 +293,72 @@ describe('圍棋主流程狀態生命週期', () => {
     sandbox.clock.runTimeouts();
     expect(sandbox.requestAIMove).toHaveBeenCalledTimes(1);
   });
+
+  test('雙虛手觸發數目後重新載入，currentPlayer 與 passCount 回到合法可續弈狀態', () => {
+    const sharedStorage = createMockLocalStorage();
+    const firstPage = sandboxWithMainLifecycle({ sharedStorage });
+    firstPage.ctx.document.getElementById('gameMode').value = 'pvp';
+    firstPage.ctx.startNewGame();
+
+    firstPage.ctx.doPass(); // 黑虛手：currentPlayer -> 白
+    firstPage.ctx.doPass(); // 白虛手：雙虛手，進入數目
+    expect(firstPage.GameState.getState().isScoring).toBe(true);
+
+    const secondPage = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+    const restored = secondPage.GameState.getState();
+    expect(restored).toMatchObject({
+      currentPlayer: 1, // 黑：白剛虛手完，下一手輪到黑
+      passCount: 0,
+      isScoring: false,
+      gameOver: false
+    });
+
+    // 再虛手一次不應該立即被判定為雙虛手終局（passCount 不應殘留在 2）。
+    secondPage.ctx.doPass();
+    expect(secondPage.GameState.getState()).toMatchObject({
+      isScoring: false,
+      passCount: 1
+    });
+  });
+
+  test('雙虛手觸發數目後重新載入，悔棋會回到「只有黑虛手一次」的自洽狀態', () => {
+    const sharedStorage = createMockLocalStorage();
+    const firstPage = sandboxWithMainLifecycle({ sharedStorage });
+    firstPage.ctx.document.getElementById('gameMode').value = 'pvp';
+    firstPage.ctx.startNewGame();
+
+    firstPage.ctx.doPass(); // 黑虛手
+    firstPage.ctx.doPass(); // 白虛手，雙虛手，進入數目
+
+    const secondPage = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+    secondPage.ctx.document.getElementById('undoToggle').checked = true;
+
+    secondPage.ctx.doUndo(); // 悔掉白的虛手
+
+    expect(secondPage.GameState.getState()).toMatchObject({
+      currentPlayer: 2, // 白：悔掉白虛手後，回到白虛手前、輪白落子
+      passCount: 1,      // 只剩黑那一次虛手
+      isScoring: false
+    });
+    expect(secondPage.GameState.getState().moveHistory).toHaveLength(1);
+    expect(secondPage.GameState.getState().moveHistory[0]).toMatchObject({ player: 1, pass: true });
+  });
+
+  test('雙虛手後取消數目，currentPlayer 回到正確的下一位落子方', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+
+    sandbox.ctx.doPass(); // 黑虛手
+    sandbox.ctx.doPass(); // 白虛手，雙虛手進入數目
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    sandbox.ctx.cancelScoring();
+
+    expect(sandbox.GameState.getState()).toMatchObject({
+      currentPlayer: 1, // 黑：取消數目後應輪到黑，而非讓白再下一手
+      passCount: 0,
+      isScoring: false
+    });
+  });
 });

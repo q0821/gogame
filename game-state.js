@@ -238,12 +238,17 @@ export function applyPass() {
   current.koPoint = null;
   current.lastMove = null;
 
-  if (current.passCount >= 2) {
-    return { ok: true, endedByDoublePass: true };
-  }
-
+  // 修正：passCount>=2（雙虛手）過去會跳過換手，讓 currentPlayer 停在「剛虛手的那一方」。
+  // 這個值一旦被持久化／還原（進入數目前存檔、取消數目、崩潰後 reload），會讓同一方
+  // 拿到多一次的落子權，回合順序不合法。虛手在 SGF/GTP 慣例下與一般落子一樣要換手，
+  // 因此一律換手；雙虛手同時把 passCount 歸零（與 cancelScoring() 既有的歸零邏輯一致），
+  // 避免續弈後只要再虛手一次就又被判為終局。
+  const endedByDoublePass = current.passCount >= 2;
   current.currentPlayer = opponent(current.currentPlayer);
-  return { ok: true, endedByDoublePass: false };
+  if (endedByDoublePass) {
+    current.passCount = 0;
+  }
+  return { ok: true, endedByDoublePass };
 }
 
 export function undo(options = {}) {
