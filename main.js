@@ -561,7 +561,8 @@ function doUndo() {
 
   const result = GameState.undo({ gameMode: state.gameMode });
   if (!result.ok) return;
-  getGoState();
+  const undoState = getGoState();
+  if (undoState.timerEnabled) switchTimer();
 
   updateUI();
   syncStatus();
@@ -883,7 +884,11 @@ function confirmScoring() {
 function cancelScoring() {
   document.getElementById('scoringModal')?.classList.remove('show');
   GameState.cancelScoring();
-  getGoState();
+  const state = getGoState();
+  if (state.timerEnabled) {
+    startTimer();
+    saveGame();
+  }
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目，繼續對弈');
   drawBoard();
@@ -893,6 +898,7 @@ function endGame(title, detail, outcome) {
   GameState.markGameOver();
   const state = getGoState();
   stopTimer();
+  saveGame();
   document.getElementById('modalTitle').textContent = '遊戲結束';
   document.getElementById('modalResult').textContent = title;
   document.getElementById('modalDetail').textContent = detail;
@@ -1331,6 +1337,16 @@ function saveGame() {
   } catch (_) {}
 }
 
+function checkpointTimedGame() {
+  const state = getGoState();
+  if (!state.timerEnabled || state.gameOver) return;
+  saveGame();
+}
+
+function checkpointHiddenTimedGame() {
+  if (document.visibilityState === 'hidden') checkpointTimedGame();
+}
+
 function loadGame() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -1361,6 +1377,7 @@ function loadGame() {
     document.getElementById('timerSettings').style.display = state.timerEnabled ? 'block' : 'none';
     document.getElementById('timerArea').style.display = state.timerEnabled ? 'block' : 'none';
     if (state.timerEnabled) updateTimerDisplay();
+    if (state.timerEnabled && !state.gameOver) startTimer();
     if (state.gameOver && document.getElementById('reviewToggle').checked) {
       document.getElementById('reviewBtn').style.display = 'block';
     }
@@ -1563,6 +1580,8 @@ Object.defineProperty(window, 'moveHistory', {
 
 // ==================== INIT ====================
 registerEventHandlers(app);
+window.addEventListener('pagehide', checkpointTimedGame);
+document.addEventListener('visibilitychange', checkpointHiddenTimedGame);
 GameState.setAiLevel(loadAiLevel());
 updateAiLevelDisplay();
 initAiLevelControls();

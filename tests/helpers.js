@@ -429,9 +429,36 @@ function createMainLifecycleElement(id = '') {
  * 載入真實 main.js 與 GameState，僅替換引擎、音訊、商店與其他棋類等外部邊界。
  * 用於驗證圍棋主流程在瀏覽器生命週期中的可觀察狀態與控制項結果。
  */
-function sandboxWithMainLifecycle({ storage = {}, hash = '#home', confirmResult = true } = {}) {
-  const localStorage = createMockLocalStorage();
+function sandboxWithMainLifecycle({
+  storage = {},
+  sharedStorage = null,
+  hash = '#home',
+  confirmResult = true,
+  useRealTimer = false,
+  now = 1_000_000
+} = {}) {
+  const localStorage = sharedStorage || createMockLocalStorage();
   Object.entries(storage).forEach(([key, value]) => localStorage.setItem(key, value));
+
+  let currentNow = now;
+  let nextIntervalId = 1;
+  const intervals = new Map();
+  class LifecycleDate extends Date {
+    constructor(...args) {
+      super(...(args.length ? args : [currentNow]));
+    }
+    static now() {
+      return currentNow;
+    }
+  }
+  const clock = {
+    advance(ms) {
+      currentNow += ms;
+    },
+    tick() {
+      for (const callback of Array.from(intervals.values())) callback();
+    }
+  };
 
   const elements = {};
   const elementDefaults = {
@@ -482,15 +509,6 @@ function sandboxWithMainLifecycle({ storage = {}, hash = '#home', confirmResult 
       }
     },
     './sound.js': { GoSound: {} },
-    './timer.js': {
-      GoTimer: {
-        init: noop,
-        start: noop,
-        switch: noop,
-        stop: noop,
-        updateDisplay: noop
-      }
-    },
     './hints.js': { GoHints: { getCaptureHints: () => [] } },
     './sgf-export.js': { shareOrDownloadSgf: async () => 'downloaded' },
     './go-settings.js': { openGoSettings: noop, closeGoSettings: noop, toggleGoSettings: noop },
@@ -529,6 +547,18 @@ function sandboxWithMainLifecycle({ storage = {}, hash = '#home', confirmResult 
       saveStats: noop
     }
   };
+  if (!useRealTimer) {
+    moduleMocks['./timer.js'] = {
+      GoTimer: {
+        init: noop,
+        start: noop,
+        switch: noop,
+        stop: noop,
+        sync: noop,
+        updateDisplay: noop
+      }
+    };
+  }
 
   const { ctx, localRequire } = createSandbox({
     localStorage,
@@ -541,11 +571,24 @@ function sandboxWithMainLifecycle({ storage = {}, hash = '#home', confirmResult 
     addEventListener: windowTarget.addEventListener,
     removeEventListener: windowTarget.removeEventListener,
     dispatchEvent: windowTarget.dispatchEvent,
-    __IOS_STORE__: false
+    __IOS_STORE__: false,
+    ...(useRealTimer ? {
+      Date: LifecycleDate,
+      setInterval: (callback) => {
+        const id = nextIntervalId++;
+        intervals.set(id, callback);
+        return id;
+      },
+      clearInterval: (id) => {
+        intervals.delete(id);
+      },
+      setTimeout: () => nextIntervalId++,
+      clearTimeout: noop
+    } : {})
   }, moduleMocks);
   loadIntoContext(ctx, localRequire, './main.js');
   const gameState = localRequire('./game-state.js');
-  return { ctx, GameState: gameState, elements, localStorage, confirm };
+  return { ctx, GameState: gameState, elements, localStorage, confirm, clock };
 }
 
 module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };
