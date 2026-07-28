@@ -443,6 +443,7 @@ function sandboxWithMainLifecycle({
   let currentNow = now;
   let nextIntervalId = 1;
   const intervals = new Map();
+  const timeouts = new Map();
   class LifecycleDate extends Date {
     constructor(...args) {
       super(...(args.length ? args : [currentNow]));
@@ -457,6 +458,13 @@ function sandboxWithMainLifecycle({
     },
     tick() {
       for (const callback of Array.from(intervals.values())) callback();
+    },
+    runTimeouts() {
+      const pending = Array.from(timeouts.entries());
+      for (const [id, callback] of pending) {
+        timeouts.delete(id);
+        callback();
+      }
     }
   };
 
@@ -495,6 +503,7 @@ function sandboxWithMainLifecycle({
   const location = { hash, hostname: 'example.test', port: '' };
 
   const noop = () => {};
+  const requestAIMove = jest.fn();
   const moduleMocks = {
     './ui.js': {
       GoUI: {
@@ -512,7 +521,7 @@ function sandboxWithMainLifecycle({
     './hints.js': { GoHints: { getCaptureHints: () => [] } },
     './sgf-export.js': { shareOrDownloadSgf: async () => 'downloaded' },
     './go-settings.js': { openGoSettings: noop, closeGoSettings: noop, toggleGoSettings: noop },
-    './ai-controller.js': { makeAiController: () => ({ requestAIMove: noop }) },
+    './ai-controller.js': { makeAiController: () => ({ requestAIMove }) },
     './event-handlers.js': { registerEventHandlers: noop },
     './gomoku-mode.js': { enterGomokuMode: noop },
     './connect6-mode.js': { enterConnect6Mode: noop },
@@ -582,13 +591,19 @@ function sandboxWithMainLifecycle({
       clearInterval: (id) => {
         intervals.delete(id);
       },
-      setTimeout: () => nextIntervalId++,
-      clearTimeout: noop
+      setTimeout: (callback) => {
+        const id = nextIntervalId++;
+        timeouts.set(id, callback);
+        return id;
+      },
+      clearTimeout: (id) => {
+        timeouts.delete(id);
+      }
     } : {})
   }, moduleMocks);
   loadIntoContext(ctx, localRequire, './main.js');
   const gameState = localRequire('./game-state.js');
-  return { ctx, GameState: gameState, elements, localStorage, confirm, clock };
+  return { ctx, GameState: gameState, elements, localStorage, confirm, clock, requestAIMove };
 }
 
 module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };

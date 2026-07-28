@@ -722,9 +722,10 @@ function deadStonesFromOwnership(ownership) {
 }
 
 async function endGameByScoring() {
+  stopTimer();
+  saveGame();
   GameState.beginScoring();
   const scoringState = getGoState();
-  stopTimer();
   document.getElementById('scoringPanel').style.display = 'block';
   // 先用舊估算顯示「計算中」基準，再用 KataGo ownership 覆蓋成準確結果。
   updateScoringDisplay();
@@ -887,8 +888,8 @@ function cancelScoring() {
   const state = getGoState();
   if (state.timerEnabled) {
     startTimer();
-    saveGame();
   }
+  saveGame();
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目，繼續對弈');
   drawBoard();
@@ -1355,6 +1356,7 @@ function loadGame() {
     if (!s || !s.board) return false;
 
     GameState.restoreSnapshot(s);
+    GameState.setAIThinking(false);
     GameState.setAiLevel(loadAiLevel());
     const state = getGoState();
 

@@ -10,7 +10,9 @@ function savedGame({
   playerColor = 1,
   timerEnabled = false,
   timerSeconds = { 1: 600, 2: 600 },
-  gameOver = false
+  gameOver = false,
+  passCount = 0,
+  isAIThinking = false
 } = {}) {
   const size = 9;
   const board = Array.from({ length: size }, () => Array(size).fill(0));
@@ -23,7 +25,7 @@ function savedGame({
     moveHistory: [{ x: 0, y: 0, player: 1, captured: 0 }],
     boardHistory: [],
     koPoint: null,
-    passCount: 0,
+    passCount,
     gameOver,
     lastMove: [0, 0],
     gameMode,
@@ -38,7 +40,7 @@ function savedGame({
     currentReviewMove: 0,
     isScoring: false,
     deadStones: [],
-    isAIThinking: false
+    isAIThinking
   };
 }
 
@@ -223,5 +225,72 @@ describe('圍棋主流程狀態生命週期', () => {
       savedPassCount: 0,
       savedIsScoring: false
     });
+  });
+
+  test('進入數目前先保存最新計時，pagehide 與 hidden 期間重新載入仍是可繼續的非數目狀態', () => {
+    const sharedStorage = createMockLocalStorage();
+    const firstPage = sandboxWithMainLifecycle({ sharedStorage, useRealTimer: true });
+    startTimedGame(firstPage);
+    firstPage.ctx.doPass();
+    firstPage.clock.advance(55_000);
+
+    firstPage.ctx.finishGame();
+    expect(firstPage.GameState.getState().isScoring).toBe(true);
+    firstPage.ctx.dispatchEvent({ type: 'pagehide' });
+    firstPage.ctx.document.visibilityState = 'hidden';
+    firstPage.ctx.document.dispatchEvent({ type: 'visibilitychange' });
+
+    const secondPage = sandboxWithMainLifecycle({
+      sharedStorage,
+      hash: '#play',
+      useRealTimer: true,
+      now: 1_055_000
+    });
+    expect(secondPage.GameState.getState()).toMatchObject({
+      currentPlayer: 2,
+      passCount: 1,
+      gameOver: false,
+      isScoring: false,
+      timerSeconds: { 1: 300, 2: 245 }
+    });
+  });
+
+  test('非計時對局取消數目後，重新載入會保留已取消狀態', () => {
+    const sharedStorage = createMockLocalStorage();
+    const firstPage = sandboxWithMainLifecycle({ sharedStorage });
+    firstPage.ctx.document.getElementById('gameMode').value = 'pvp';
+    firstPage.ctx.startNewGame();
+    firstPage.ctx.doPass();
+    firstPage.ctx.finishGame();
+
+    firstPage.ctx.cancelScoring();
+
+    const secondPage = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+    expect(secondPage.GameState.getState()).toMatchObject({
+      passCount: 0,
+      gameOver: false,
+      isScoring: false
+    });
+  });
+
+  test('載入 AI 思考中的計時 snapshot 會清除舊 lock，並讓 AI 求手排程進入 controller 邊界', () => {
+    const sandbox = sandboxWithMainLifecycle({
+      hash: '#play',
+      useRealTimer: true,
+      storage: {
+        [SAVE_KEY]: JSON.stringify(savedGame({
+          currentPlayer: 2,
+          gameMode: 'pvc',
+          playerColor: 1,
+          timerEnabled: true,
+          timerSeconds: { 1: 300, 2: 245 },
+          isAIThinking: true
+        }))
+      }
+    });
+
+    expect(sandbox.GameState.getState().isAIThinking).toBe(false);
+    sandbox.clock.runTimeouts();
+    expect(sandbox.requestAIMove).toHaveBeenCalledTimes(1);
   });
 });
