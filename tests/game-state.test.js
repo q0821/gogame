@@ -202,6 +202,28 @@ describe('applyPass', () => {
     expect(GameState.getState().passCount).toBe(1);
   });
 
+  test('double pass 也換手並把 passCount 歸零，同時仍回報 endedByDoublePass', () => {
+    GameState.applyPass();                    // 黑虛手 → 換手給白
+    expect(GameState.getState().currentPlayer).toBe(WHITE);
+
+    const result = GameState.applyPass();     // 白虛手 → 雙虛手
+    const state = GameState.getState();
+
+    expect({
+      endedByDoublePass: result.endedByDoublePass,
+      currentPlayer: state.currentPlayer,
+      passCount: state.passCount,
+      moveHistory: state.moveHistory.map((m) => ({ player: m.player, pass: !!m.pass }))
+    }).toEqual({
+      endedByDoublePass: true,
+      // 虛手與落子一樣要換手：白剛虛手完，下一位落子方是黑。
+      currentPlayer: BLACK,
+      // 歸零後續弈時再虛手「一次」不會又被判為終局。
+      passCount: 0,
+      moveHistory: [{ player: BLACK, pass: true }, { player: WHITE, pass: true }]
+    });
+  });
+
   test('pass clears koPoint', () => {
     GameState.resetState({ size: 9, koPoint: [3, 3] });
     GameState.applyPass();

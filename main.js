@@ -569,6 +569,18 @@ function doUndo() {
   drawBoard();
   setStatus('已退回一手');
   saveGame();
+
+  // 悔棋會改變手番，但沒有任何人會替 AI 推進。PvC 且 AI 先手（人類執白、或讓子局白先）
+  // 時，悔兩手後會回到「輪 AI」的局面：棋盤點擊被 event-handlers.js 的手番守門擋住、
+  // AI 也沒被喚醒，對局就停住。比照 loadGame() 的做法，還原後輪到 AI 就排一次求手。
+  const afterUndo = getGoState();
+  if (
+    afterUndo.gameMode === 'pvc'
+    && !afterUndo.gameOver
+    && afterUndo.currentPlayer !== afterUndo.playerColor
+  ) {
+    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+  }
 }
 
 function doResign() {
@@ -893,6 +905,19 @@ function cancelScoring() {
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目，繼續對弈');
   drawBoard();
+
+  // 取消數目讓對局從「不可下」回到「可下」，手番也可能落在 AI 身上：雙虛手進入數目時
+  // 第二個虛手方若是人類（PvC 人類執白，也正是 doPass() 提示「AI 虛手了 — 你也虛手即可
+  // 數目」引導的流程），換手後就輪 AI。此處不排求手，棋盤點擊會被 event-handlers.js 的
+  // 手番守門擋住、AI 也不會動，對局停住。比照 loadGame() 的做法補上排程。
+  const afterCancel = getGoState();
+  if (
+    afterCancel.gameMode === 'pvc'
+    && !afterCancel.gameOver
+    && afterCancel.currentPlayer !== afterCancel.playerColor
+  ) {
+    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+  }
 }
 
 function endGame(title, detail, outcome) {

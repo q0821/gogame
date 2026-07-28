@@ -55,6 +55,18 @@ function readSavedGame(localStorage) {
   return JSON.parse(localStorage.getItem(SAVE_KEY));
 }
 
+/**
+ * 開一局 PvC。playerColor=2（人類執白）時 AI 執黑先手，startNewGame() 會排一次開局求手；
+ * 先把該排程跑掉並清空 mock，後續斷言的呼叫次數才只反映被測路徑。
+ */
+function startPvcGame(sandbox, { playerColor = 1 } = {}) {
+  sandbox.ctx.document.getElementById('gameMode').value = 'pvc';
+  sandbox.ctx.document.getElementById('playerColor').value = String(playerColor);
+  sandbox.ctx.startNewGame();
+  sandbox.clock.runTimeouts();
+  sandbox.requestAIMove.mockClear();
+}
+
 describe('圍棋主流程狀態生命週期', () => {
   test('實際棋譜已有落子時，重新開始會先確認並在取消後保留對局', () => {
     const { ctx, GameState, confirm } = sandboxWithMainLifecycle({ confirmResult: false });
@@ -312,6 +324,12 @@ describe('圍棋主流程狀態生命週期', () => {
       isScoring: false,
       gameOver: false
     });
+    // 上面 4 個欄位與「全新一局」同值，單靠它們無法分辨「還原了雙虛手 snapshot」
+    // 與「根本沒載入、開了新局」；用棋譜長度／內容釘住確實載入的是雙虛手那一局。
+    expect(restored.moveHistory.map((m) => ({ player: m.player, pass: !!m.pass }))).toEqual([
+      { player: 1, pass: true },
+      { player: 2, pass: true }
+    ]);
 
     // 再虛手一次不應該立即被判定為雙虛手終局（passCount 不應殘留在 2）。
     secondPage.ctx.doPass();
@@ -360,5 +378,65 @@ describe('圍棋主流程狀態生命週期', () => {
       passCount: 0,
       isScoring: false
     });
+  });
+
+  test('PvC 雙虛手取消數目後，輪到 AI 就排求手、輪到人類就不排', () => {
+    const actual = [1, 2].map((playerColor) => {
+      const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
+      startPvcGame(sandbox, { playerColor });
+
+      sandbox.ctx.doPass(); // 黑虛手（人類執黑時是人類；人類執白時是 AI）
+      sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目
+      expect(sandbox.GameState.getState().isScoring).toBe(true);
+      sandbox.clock.runTimeouts();
+      sandbox.requestAIMove.mockClear();
+
+      sandbox.ctx.cancelScoring();
+      sandbox.clock.runTimeouts();
+
+      const state = sandbox.GameState.getState();
+      return {
+        playerColor,
+        currentPlayer: state.currentPlayer,
+        aiCalls: sandbox.requestAIMove.mock.calls.length,
+        moveHistory: state.moveHistory.map((m) => ({ player: m.player, pass: !!m.pass }))
+      };
+    });
+
+    // 棋譜必須恰好是「黑虛手、白虛手」，不會多出顏色掛錯的第三手虛手。
+    const doublePass = [{ player: 1, pass: true }, { player: 2, pass: true }];
+    expect(actual).toEqual([
+      // 人類執黑：AI 是第二個虛手方，取消後輪回人類，不該叫 AI。
+      { playerColor: 1, currentPlayer: 1, aiCalls: 0, moveHistory: doublePass },
+      // 人類執白：人類是第二個虛手方，取消後輪到 AI（黑），沒人叫 AI 棋局就停住。
+      { playerColor: 2, currentPlayer: 1, aiCalls: 1, moveHistory: doublePass }
+    ]);
+  });
+
+  test('PvC 悔棋後輪到 AI 就排求手、輪到人類就不排', () => {
+    const actual = [1, 2].map((playerColor) => {
+      const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
+      startPvcGame(sandbox, { playerColor });
+      sandbox.GameState.applyMove(0, 0); // 黑第一手
+      sandbox.GameState.applyMove(1, 0); // 白第二手
+
+      sandbox.ctx.doUndo(); // PvC 一次悔兩手
+      sandbox.clock.runTimeouts();
+
+      const state = sandbox.GameState.getState();
+      return {
+        playerColor,
+        currentPlayer: state.currentPlayer,
+        moves: state.moveHistory.length,
+        aiCalls: sandbox.requestAIMove.mock.calls.length
+      };
+    });
+
+    expect(actual).toEqual([
+      // 人類執黑：悔兩手後回到開局，仍輪人類，不該叫 AI。
+      { playerColor: 1, currentPlayer: 1, moves: 0, aiCalls: 0 },
+      // 人類執白：AI 執黑先手，悔兩手後回到開局仍輪 AI，沒人叫 AI 棋局就停住。
+      { playerColor: 2, currentPlayer: 1, moves: 0, aiCalls: 1 }
+    ]);
   });
 });
