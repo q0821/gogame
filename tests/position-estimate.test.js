@@ -2,9 +2,11 @@
 const { sandboxWithPositionEstimate } = require('./helpers');
 
 let formatPositionEstimate;
+let isAnalysisRequestCurrent;
 beforeAll(() => {
   const ctx = sandboxWithPositionEstimate();
   formatPositionEstimate = ctx.formatPositionEstimate;
+  isAnalysisRequestCurrent = ctx.isAnalysisRequestCurrent;
 });
 
 test('黑領先：勝率取整數百分比、目數一位小數', () => {
@@ -25,4 +27,22 @@ test('差距小於 0.5 目視為局勢接近', () => {
 test('缺少數值時回傳 null（引擎未給出評估）', () => {
   expect(formatPositionEstimate({ winrate: null, scoreLead: 3 })).toBeNull();
   expect(formatPositionEstimate({ winrate: 0.5, scoreLead: undefined })).toBeNull();
+});
+
+test('手數與行棋方相同但棋盤已替換時，丟棄舊分析結果', () => {
+  const requestBoard = [[1, 0], [0, 0]];
+  const latestState = {
+    board: [[0, 1], [0, 0]],
+    moveHistory: [{ x: 0, y: 1, player: 1 }],
+    currentPlayer: 2,
+    gameOver: false,
+  };
+  const staleResult = { ownership: [0.8, -0.2, 0.1, -0.1] };
+  let visibleOwnership = null;
+
+  if (isAnalysisRequestCurrent(latestState, requestBoard, 1, 2)) {
+    visibleOwnership = staleResult.ownership;
+  }
+
+  expect(visibleOwnership).toBeNull();
 });

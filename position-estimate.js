@@ -13,3 +13,10 @@ export function formatPositionEstimate({ winrate, scoreLead }) {
     : `${scoreLead > 0 ? '黑' : '白'}領先約 ${lead.toFixed(1)} 目`;
   return `黑勝率 ${pct}%・${leadTxt}`;
 }
+
+export function isAnalysisRequestCurrent(latestState, requestBoard, requestMoveCount, requestPlayer) {
+  return latestState.board === requestBoard
+    && latestState.moveHistory.length === requestMoveCount
+    && latestState.currentPlayer === requestPlayer
+    && !latestState.gameOver;
+}

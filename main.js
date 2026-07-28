@@ -22,7 +22,7 @@ import { loadProgress as loadTsumegoProgress, totalSolved as tsumegoTotalSolved 
 import { playTitleReveal, startAmbient, playTransition } from './ink-fx.js';
 import * as KataGo from './katago-service.js';
 import { nextLevelForMode, kyuLabel, levelConfig, MIN_LEVEL, MAX_LEVEL } from './adaptive-difficulty.js';
-import { formatPositionEstimate } from './position-estimate.js';
+import { formatPositionEstimate, isAnalysisRequestCurrent } from './position-estimate.js';
 import { isPremium, remainingQuota, consumeQuota } from './entitlements.js';
 import * as Store from './store-service.js';
 import { initAudio, loadSfxPack, playSfx } from './audio-manager.js';
@@ -234,6 +234,7 @@ async function requestMoveHint() {
   const state = getGoState();
   if (isGameBusy() || _suggestBusy) return;
   if (state.gameMode === 'pvc' && state.currentPlayer !== state.playerColor) return; // 只在輪到你時
+  const requestBoard = state.board;
   const requestMoveCount = state.moveHistory.length;
   const requestPlayer = state.currentPlayer;
   _suggestBusy = true;
@@ -249,11 +250,7 @@ async function requestMoveHint() {
       onStatus: setStatus,
     }, { visits: 24 });
     const latest = getGoState();
-    if (
-      latest.moveHistory.length !== requestMoveCount
-      || latest.currentPlayer !== requestPlayer
-      || latest.gameOver
-    ) {
+    if (!isAnalysisRequestCurrent(latest, requestBoard, requestMoveCount, requestPlayer)) {
       return;
     }
     if (r.move) {
@@ -372,6 +369,7 @@ async function requestPositionEstimate() {
     openPremiumModal('免費版每天可用 1 次「形勢判斷」，今天的額度已用完。');
     return;
   }
+  const requestBoard = state.board;
   const requestMoveCount = state.moveHistory.length;
   const requestPlayer = state.currentPlayer;
   _estimateBusy = true;
@@ -379,27 +377,19 @@ async function requestPositionEstimate() {
   try {
     await KataGo.ensureReady(setStatus);
     const readyState = getGoState();
-    if (
-      readyState.moveHistory.length !== requestMoveCount
-      || readyState.currentPlayer !== requestPlayer
-      || readyState.gameOver
-    ) {
+    if (!isAnalysisRequestCurrent(readyState, requestBoard, requestMoveCount, requestPlayer)) {
       return;
     }
     const a = await KataGo.evaluate({
-      board: state.board,
-      size: state.size,
-      currentPlayer: state.currentPlayer,
-      moveHistory: state.moveHistory,
-      komi: state.komi,
-      gameRules: state.gameRules,
+      board: readyState.board,
+      size: readyState.size,
+      currentPlayer: readyState.currentPlayer,
+      moveHistory: readyState.moveHistory,
+      komi: readyState.komi,
+      gameRules: readyState.gameRules,
     }, { visits: 24 });
     const latest = getGoState();
-    if (
-      latest.moveHistory.length !== requestMoveCount
-      || latest.currentPlayer !== requestPlayer
-      || latest.gameOver
-    ) {
+    if (!isAnalysisRequestCurrent(latest, requestBoard, requestMoveCount, requestPlayer)) {
       return;
     }
     const txt = formatPositionEstimate({ winrate: a?.rootWinRate, scoreLead: a?.rootScoreLead });
@@ -927,10 +917,11 @@ async function exportSGF() {
     openPremiumModal('SGF 棋譜匯出為完整版功能。');
     return;
   }
-  const handicapStones = GameState.getState().handicap >= 2 ? handicapPoints(size, GameState.getState().handicap) : [];
-  const sgf = buildSGF(moveHistory, size, komi, handicapStones);
+  const state = getGoState();
+  const handicapStones = state.handicap >= 2 ? handicapPoints(state.size, state.handicap) : [];
+  const sgf = buildSGF(state.moveHistory, state.size, state.komi, handicapStones);
   const date = new Date().toISOString().slice(0, 10);
-  const result = await shareOrDownloadSgf(sgf, `gogame_${date}_${size}x${size}.sgf`);
+  const result = await shareOrDownloadSgf(sgf, `gogame_${date}_${state.size}x${state.size}.sgf`);
   if (result === 'shared') setStatus('SGF 已分享');
   else if (result === 'downloaded') setStatus('SGF 已下載');
 }
@@ -948,12 +939,12 @@ function _timerOnTimeout(losingPlayer) {
 
 function timerOptions() {
   return {
-    getTimerSeconds: () => GameState.getState().timerSeconds,
+    getTimerSeconds: () => getGoState().timerSeconds,
     setTimerSeconds: (seconds) => {
       GameState.setTimerSeconds(seconds);
-      timerSeconds = { ...GameState.getState().timerSeconds };
+      timerSeconds = { ...getGoState().timerSeconds };
     },
-    getCurrentPlayer: () => GameState.getState().currentPlayer,
+    getCurrentPlayer: () => getGoState().currentPlayer,
     onTimeout: _timerOnTimeout
   };
 }
@@ -964,12 +955,12 @@ function initTimer() {
 }
 
 function startTimer() {
-  if (!GameState.getState().timerEnabled) return;
+  if (!getGoState().timerEnabled) return;
   GoTimer.start(timerOptions());
 }
 
 function switchTimer() {
-  if (!GameState.getState().timerEnabled) return;
+  if (!getGoState().timerEnabled) return;
   GoTimer.switch(timerOptions());
 }
 
@@ -978,7 +969,7 @@ function stopTimer() {
 }
 
 function updateTimerDisplay() {
-  GoTimer.updateDisplay(GameState.getState().timerSeconds);
+  GoTimer.updateDisplay(getGoState().timerSeconds);
 }
 
 // ==================== REVIEW ====================
@@ -1319,7 +1310,7 @@ function loadGame() {
     document.getElementById('gameRules').value = gameRules;
     document.getElementById('playerColorGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
     document.getElementById('aiStrengthGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
-    const handicapState = GameState.getState().handicap || 0;
+    const handicapState = getGoState().handicap || 0;
     const hg = document.getElementById('handicapGroup');
     if (hg) hg.style.display = gameMode === 'pvc' ? 'block' : 'none';
     const hSel = document.getElementById('handicap');
