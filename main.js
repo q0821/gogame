@@ -146,7 +146,6 @@ const app = {
   set hoverPos(v)         { hoverPos = v; },
 
   // References to modules
-  GameState,
   GoUI, GoSound, GoTimer, GoHints, GoReview,
 
   // Functions (bound below)
@@ -154,7 +153,15 @@ const app = {
   isGameBlocked, isGameBusy,
   placeStone: (...args) => placeStone(...args),
   doPass: (...args) => doPass(...args),
-  applyStateFromStore: () => applyStateFromStore(),
+  setAIThinking: (value) => {
+    GameState.setAIThinking(value);
+    applyStateFromStore();
+  },
+  toggleDeadGroup: (stones) => {
+    const result = GameState.toggleDeadGroup(stones);
+    applyStateFromStore();
+    return result;
+  },
   updateUI: () => updateUI(),
   updateScoringDisplay: () => updateScoringDisplay(),
   syncStatus: (...args) => syncStatus(...args),

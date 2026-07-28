@@ -60,8 +60,7 @@ export function makeAiController(app) {
     // 已輪到玩家時誤觸發 AI 幫玩家下子。
     if (app.gameMode === 'pvc' && app.currentPlayer === app.playerColor) return;
 
-    app.GameState.sync({ isAIThinking: true });
-    app.applyStateFromStore();
+    app.setAIThinking(true);
     app.syncStatus();
     app.updateUI();
 
@@ -96,23 +95,20 @@ export function makeAiController(app) {
       const remaining = minThinkMs - (Date.now() - thinkStart);
       if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
 
-      app.GameState.sync({ isAIThinking: false });
-      app.applyStateFromStore();
+      app.setAIThinking(false);
       app.updateUI();
 
       if (move && !move.pass) app.placeStone(move.x, move.y);
       else app.doPass();
 
       if (!app.gameOver && !app.isAIThinking) {
-        app.applyStateFromStore();
         app.updateUI();
       }
     } catch (err) {
       console.error('AI move failed after retries:', err);
       // 重置引擎，讓後續重試／開始新遊戲能重建乾淨 worker 恢復，毋需整頁重整。
       try { KataGo.reset(); } catch { /* noop */ }
-      app.GameState.sync({ isAIThinking: false });
-      app.applyStateFromStore();
+      app.setAIThinking(false);
       app.updateUI();
       const detail = (err && err.message) ? err.message : String(err);
 

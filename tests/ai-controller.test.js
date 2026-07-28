@@ -32,7 +32,7 @@ function makeApp(overrides = {}) {
     aiMoveWatchdogMs: 20, // 測試用短逾時，避免真的等 20 秒
     ...overrides
   };
-  const calls = { sync: [], placeStone: [], doPassCount: 0, setStatus: [] };
+  const calls = { setAIThinking: [], placeStone: [], doPassCount: 0, setStatus: [] };
   const app = {
     get gameOver() { return state.gameOver; },
     get isAIThinking() { return state.isAIThinking; },
@@ -46,15 +46,10 @@ function makeApp(overrides = {}) {
     get komi() { return state.komi; },
     get gameRules() { return state.gameRules; },
     get aiMoveWatchdogMs() { return state.aiMoveWatchdogMs; },
-    GameState: {
-      sync(partial) {
-        calls.sync.push(partial);
-        if (Object.prototype.hasOwnProperty.call(partial, 'isAIThinking')) {
-          state.isAIThinking = partial.isAIThinking;
-        }
-      }
+    setAIThinking(value) {
+      calls.setAIThinking.push(value);
+      state.isAIThinking = value;
     },
-    applyStateFromStore() {},
     syncStatus() {},
     updateUI() {},
     setStatus(msg) { calls.setStatus.push(msg); },
@@ -100,6 +95,8 @@ describe('requestAIMove watchdog：Worker 卡死不 settle 時不永久卡住', 
     // 核心迴歸斷言：即使底層 promise 永遠不 settle，isAIThinking 最終仍會被釋放，
     // 不會讓 isGameBusy() 永久擋死玩家操作。
     expect(app.isAIThinking).toBe(false);
+    expect(calls.setAIThinking[0]).toBe(true);
+    expect(calls.setAIThinking[calls.setAIThinking.length - 1]).toBe(false);
     // 逾時應觸發過引擎 reset（比照既有「AI 連線異常」重試路徑）。
     expect(mockKataGo.reset).toHaveBeenCalled();
     // 從未真的落子（因為從未拿到手）。
@@ -124,6 +121,7 @@ describe('requestAIMove 正常路徑：watchdog 不誤觸發', () => {
 
     expect(calls.placeStone).toEqual([[3, 4]]);
     expect(app.isAIThinking).toBe(false);
+    expect(calls.setAIThinking).toEqual([true, false]);
     expect(mockKataGo.reset).not.toHaveBeenCalled();
   }, 10000);
 

@@ -28,9 +28,8 @@ export function registerEventHandlers(app) {
     if (app.isScoring) {
       if (app.board[x][y] !== app.EMPTY) {
         const group = app.getGroup(app.board, x, y);
-        const result = app.GameState.toggleDeadGroup(group.stones);
+        const result = app.toggleDeadGroup(group.stones);
         if (!result.ok) return;
-        app.applyStateFromStore();
         app.updateScoringDisplay();
         app.drawBoard();
       }
