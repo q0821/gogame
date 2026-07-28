@@ -95,15 +95,23 @@ let hoverPos = null;
 // ==================== GameState proxy ====================
 const GameState = GameStateModule;
 
-// ==================== BOARD / RULES ENGINE ====================
-function inBounds(x, y)          { return _inBounds(size, x, y); }
-function getNeighbors(x, y)      { return _getNeighbors(size, x, y); }
-function getGroup(b, x, y)       { return _getGroup(b, size, x, y); }
-function tryPlaceStone(b, x, y, player, ko) { return _tryPlaceStone(b, size, x, y, player, ko); }
-function getLegalMoves(b, player, ko)       { return _getLegalMoves(b, size, player, ko); }
+function getGoState() {
+  return GameState.getState();
+}
 
-function isGameBlocked() { return gameOver || isReviewing || isScoring; }
-function isGameBusy()    { return isGameBlocked() || isAIThinking; }
+// ==================== BOARD / RULES ENGINE ====================
+function inBounds(x, y)          { return _inBounds(getGoState().size, x, y); }
+function getNeighbors(x, y)      { return _getNeighbors(getGoState().size, x, y); }
+function getGroup(b, x, y)       { return _getGroup(b, getGoState().size, x, y); }
+function tryPlaceStone(b, x, y, player, ko) { return _tryPlaceStone(b, getGoState().size, x, y, player, ko); }
+function getLegalMoves(b, player, ko)       { return _getLegalMoves(b, getGoState().size, player, ko); }
+
+function isGameBlocked() {
+  const state = getGoState();
+  return state.gameOver || state.isReviewing || state.isScoring;
+}
+
+function isGameBusy()    { return isGameBlocked() || getGoState().isAIThinking; }
 
 // ==================== APP CONTEXT (shared with sub-modules) ====================
 // The `app` object provides sub-modules with access to mutable state and helpers.
@@ -114,26 +122,26 @@ const app = {
   COORD_LETTERS, STAR_POINTS,
 
   // State getters (re-read live values)
-  get size()              { return size; },
-  get board()             { return board; },
-  get currentPlayer()     { return currentPlayer; },
-  get captures()          { return captures; },
-  get moveHistory()       { return moveHistory; },
-  get koPoint()           { return koPoint; },
-  get passCount()         { return passCount; },
-  get gameOver()          { return gameOver; },
-  get gameMode()          { return gameMode; },
-  get playerColor()       { return playerColor; },
-  get aiLevel()           { return aiLevel; },
-  get isAIThinking()      { return isAIThinking; },
-  get timerEnabled()      { return timerEnabled; },
-  get timerSeconds()      { return timerSeconds; },
-  get gameRules()         { return gameRules; },
-  get komi()              { return komi; },
-  get isReviewing()       { return isReviewing; },
-  get currentReviewMove() { return currentReviewMove; },
-  get isScoring()         { return isScoring; },
-  get deadStones()        { return deadStones; },
+  get size()              { return getGoState().size; },
+  get board()             { return getGoState().board; },
+  get currentPlayer()     { return getGoState().currentPlayer; },
+  get captures()          { return getGoState().captures; },
+  get moveHistory()       { return getGoState().moveHistory; },
+  get koPoint()           { return getGoState().koPoint; },
+  get passCount()         { return getGoState().passCount; },
+  get gameOver()          { return getGoState().gameOver; },
+  get gameMode()          { return getGoState().gameMode; },
+  get playerColor()       { return getGoState().playerColor; },
+  get aiLevel()           { return getGoState().aiLevel; },
+  get isAIThinking()      { return getGoState().isAIThinking; },
+  get timerEnabled()      { return getGoState().timerEnabled; },
+  get timerSeconds()      { return getGoState().timerSeconds; },
+  get gameRules()         { return getGoState().gameRules; },
+  get komi()              { return getGoState().komi; },
+  get isReviewing()       { return getGoState().isReviewing; },
+  get currentReviewMove() { return getGoState().currentReviewMove; },
+  get isScoring()         { return getGoState().isScoring; },
+  get deadStones()        { return getGoState().deadStones; },
   get showingHint()       { return showingHint; },
   get emotionEnabled()    { return emotionEnabled; },
   get canvas()            { return canvas; },
@@ -223,14 +231,31 @@ function showToast(msg) {
 // 走法提示：用 KataGo 算「現在這手該下哪」+ 數據理由（值幾目）。
 // 注意：此處用全力最佳手、不套用對弈的隨機弱化，所以建議與對手強度無關。
 async function requestMoveHint() {
+  const state = getGoState();
   if (isGameBusy() || _suggestBusy) return;
-  if (gameMode === 'pvc' && currentPlayer !== playerColor) return; // 只在輪到你時
+  if (state.gameMode === 'pvc' && state.currentPlayer !== state.playerColor) return; // 只在輪到你時
+  const requestMoveCount = state.moveHistory.length;
+  const requestPlayer = state.currentPlayer;
   _suggestBusy = true;
   setStatus('AI 思考建議走法中…');
   try {
     const r = await KataGo.suggest({
-      board, size, currentPlayer, moveHistory, komi, gameRules, onStatus: setStatus,
+      board: state.board,
+      size: state.size,
+      currentPlayer: state.currentPlayer,
+      moveHistory: state.moveHistory,
+      komi: state.komi,
+      gameRules: state.gameRules,
+      onStatus: setStatus,
     }, { visits: 24 });
+    const latest = getGoState();
+    if (
+      latest.moveHistory.length !== requestMoveCount
+      || latest.currentPlayer !== requestPlayer
+      || latest.gameOver
+    ) {
+      return;
+    }
     if (r.move) {
       suggestMove = [r.move.x, r.move.y];
       setStatus(describeSuggestion(r));
@@ -249,11 +274,12 @@ async function requestMoveHint() {
 
 // 把 KataGo 數據翻成白話（誠實、只用真實數值）：座標、領先目數、後續手數。
 function describeSuggestion(r) {
-  const coord = `${COORD_LETTERS[r.move.y]}${size - r.move.x}`;
+  const state = getGoState();
+  const coord = `${COORD_LETTERS[r.move.y]}${state.size - r.move.x}`;
   // scoreLead 是黑領先目數；換成「當前玩家」視角
   let leadTxt = '';
   if (typeof r.scoreLead === 'number') {
-    const mine = currentPlayer === BLACK ? r.scoreLead : -r.scoreLead;
+    const mine = state.currentPlayer === BLACK ? r.scoreLead : -r.scoreLead;
     leadTxt = mine >= 0 ? `下了約領先 ${mine.toFixed(0)} 目` : `下了仍落後約 ${(-mine).toFixed(0)} 目`;
   }
   return `建議走法：${coord}（藍圈）${leadTxt ? '，' + leadTxt : ''}`;
@@ -339,19 +365,43 @@ function updateHomePremiumEntry() {
 // 形勢判斷：對局中隨時評估目前盤面。顯示黑方視角勝率＋領先目數，並以領地覆蓋層
 // 上色（重用覆盤的 ownership 繪圖）；下一手（落子/虛手/悔棋）即自動清除覆蓋層。
 async function requestPositionEstimate() {
+  const state = getGoState();
   if (isGameBusy() || _estimateBusy) return;
-  if (moveHistory.length === 0) { setStatus('盤面還是空的，先下幾手再判斷形勢'); return; }
+  if (state.moveHistory.length === 0) { setStatus('盤面還是空的，先下幾手再判斷形勢'); return; }
   if (!premiumUnlocked() && remainingQuota(localStorage, 'estimate', FREE_DAILY_ESTIMATE, todayStr()) <= 0) {
     openPremiumModal('免費版每天可用 1 次「形勢判斷」，今天的額度已用完。');
     return;
   }
+  const requestMoveCount = state.moveHistory.length;
+  const requestPlayer = state.currentPlayer;
   _estimateBusy = true;
   setStatus('形勢判斷中…');
   try {
     await KataGo.ensureReady(setStatus);
+    const readyState = getGoState();
+    if (
+      readyState.moveHistory.length !== requestMoveCount
+      || readyState.currentPlayer !== requestPlayer
+      || readyState.gameOver
+    ) {
+      return;
+    }
     const a = await KataGo.evaluate({
-      board, size, currentPlayer, moveHistory, komi, gameRules,
+      board: state.board,
+      size: state.size,
+      currentPlayer: state.currentPlayer,
+      moveHistory: state.moveHistory,
+      komi: state.komi,
+      gameRules: state.gameRules,
     }, { visits: 24 });
+    const latest = getGoState();
+    if (
+      latest.moveHistory.length !== requestMoveCount
+      || latest.currentPlayer !== requestPlayer
+      || latest.gameOver
+    ) {
+      return;
+    }
     const txt = formatPositionEstimate({ winrate: a?.rootWinRate, scoreLead: a?.rootScoreLead });
     liveOwnership = a?.ownership || null;
     setStatus(txt || '形勢判斷失敗，請稍候再試');
@@ -384,34 +434,42 @@ function invalidMoveReasonText(reason) {
   return '此處不能下子';
 }
 
-function getCaptureHints(b, player) {
-  return GoHints.getCaptureHints(b, size, player, koPoint);
+function getCaptureHints(board, player) {
+  const state = getGoState();
+  return GoHints.getCaptureHints(board, state.size, player, state.koPoint);
 }
 
 // ==================== RENDERING ====================
-function getCurrentStateSnapshot() {
-  return {
-    size, board, currentPlayer, captures, moveHistory, boardHistory,
-    koPoint, passCount, gameOver, lastMove, gameMode, playerColor,
-    aiLevel, timerEnabled, timerSeconds, gameRules, komi, isReviewing,
-    currentReviewMove, isScoring, deadStones, isAIThinking
-  };
-}
-
 function buildBoardViewState() {
-  const state = getCurrentStateSnapshot();
-  const displayBoard = isReviewing ? GoReview.getReviewBoard(moveHistory, currentReviewMove, size) : board;
-  const scoreData = isScoring ? calculateScore(board, size, deadStones, captures, gameRules, komi) : null;
-  const captureHints = showingHint && !gameOver && !isReviewing && !isScoring && !isAIThinking
-    ? getCaptureHints(board, currentPlayer)
-    : [];
-  const lastMoveToShow = isReviewing ? GoReview.getReviewLastMove(moveHistory, currentReviewMove) : lastMove;
+  const state = getGoState();
+  const displayBoard = state.isReviewing
+    ? GoReview.getReviewBoard(state.moveHistory, state.currentReviewMove, state.size)
+    : state.board;
+  const scoreData = state.isScoring
+    ? calculateScore(
+        state.board,
+        state.size,
+        state.deadStones,
+        state.captures,
+        state.gameRules,
+        state.komi
+      )
+    : null;
+  const captureHints = showingHint
+    && !state.gameOver
+    && !state.isReviewing
+    && !state.isScoring
+    && !state.isAIThinking
+      ? getCaptureHints(state.board, state.currentPlayer)
+      : [];
+  const lastMove = state.isReviewing
+    ? GoReview.getReviewLastMove(state.moveHistory, state.currentReviewMove)
+    : state.lastMove;
 
   return {
     ...state,
     displayBoard,
-    deadStones,
-    lastMove: lastMoveToShow,
+    lastMove,
     scoreData,
     showingHint,
     captureHints,
@@ -419,9 +477,14 @@ function buildBoardViewState() {
     emotionEnabled,
     hoverPos,
     invalidFlash,
-    ownership: (isReviewing && reviewOwnershipOn && reviewAnalysis && reviewAnalysis[currentReviewMove])
-      ? reviewAnalysis[currentReviewMove].ownership
-      : (!isReviewing && !isScoring ? liveOwnership : null),
+    ownership: (
+      state.isReviewing
+      && reviewOwnershipOn
+      && reviewAnalysis
+      && reviewAnalysis[state.currentReviewMove]
+    )
+      ? reviewAnalysis[state.currentReviewMove].ownership
+      : (!state.isReviewing && !state.isScoring ? liveOwnership : null),
   };
 }
 
@@ -950,10 +1013,19 @@ function reviewGo(n) {
 }
 
 function updateReviewInfo() {
-  GoUI.updateReviewInfo({ currentReviewMove, moveHistory, size });
+  const state = getGoState();
+  GoUI.updateReviewInfo({
+    currentReviewMove: state.currentReviewMove,
+    moveHistory: state.moveHistory,
+    size: state.size,
+  });
   if (reviewAnalysis) {
-    GoUI.updateReviewAnalysisInfo({ currentReviewMove, moveHistory, analysis: reviewAnalysis });
-    GoUI.drawWinrateGraph(document.getElementById('winrateGraph'), reviewAnalysis, currentReviewMove);
+    GoUI.updateReviewAnalysisInfo({
+      currentReviewMove: state.currentReviewMove,
+      moveHistory: state.moveHistory,
+      analysis: reviewAnalysis,
+    });
+    GoUI.drawWinrateGraph(document.getElementById('winrateGraph'), reviewAnalysis, state.currentReviewMove);
   }
 }
 
@@ -1027,11 +1099,12 @@ async function analyzeReview() {
 }
 
 function onWinrateGraphClick(e) {
+  const state = getGoState();
   if (!reviewAnalysis) return;
   const canvas = e.currentTarget;
   const rect = canvas.getBoundingClientRect();
   const frac = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
-  const N = moveHistory.length;
+  const N = state.moveHistory.length;
   reviewGo(Math.max(0, Math.min(N, Math.round(frac * N))));
 }
 
@@ -1092,16 +1165,16 @@ function returnToOriginal() {
 
 // ==================== UI ====================
 function updateUI() {
+  const state = getGoState();
   const overlay = document.getElementById('aiThinkingOverlay');
-  if (overlay) overlay.style.display = isAIThinking ? 'flex' : 'none';
-  GoUI.updateHUD({ gameOver, isAIThinking, currentPlayer, captures, moveHistory });
+  if (overlay) overlay.style.display = state.isAIThinking ? 'flex' : 'none';
+  GoUI.updateHUD(state);
 }
 
 function setStatus(msg) { GoUI.setStatus(msg); }
 
 function syncStatus(message = '') {
-  const state = { currentPlayer, gameOver, isScoring, isReviewing, isAIThinking };
-  GoUI.syncStatus(state, message);
+  GoUI.syncStatus(getGoState(), message);
 }
 
 // ==================== NEW GAME ====================
@@ -1443,11 +1516,11 @@ Object.assign(window, {
 // Keep window.currentReviewMove and window.moveHistory in sync for inline onclick
 // handlers in index.html (e.g. reviewGo(currentReviewMove-1)).
 Object.defineProperty(window, 'currentReviewMove', {
-  get() { return currentReviewMove; },
+  get() { return getGoState().currentReviewMove; },
   configurable: true
 });
 Object.defineProperty(window, 'moveHistory', {
-  get() { return moveHistory; },
+  get() { return getGoState().moveHistory; },
   configurable: true
 });
 
