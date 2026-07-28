@@ -49,7 +49,7 @@ function makeRequire(ctx, cache) {
 
     const cjs = transpile(filePath);
     const script = new vm.Script(
-      `(function(require, module, exports){ ${cjs} })(localRequire, localModule, localModule.exports);`
+      `(function(require, module, exports){ ${cjs}\n})(localRequire, localModule, localModule.exports);`
     );
     ctx.localRequire = localRequire;
     ctx.localModule = { exports: modExports };
@@ -360,4 +360,192 @@ function sandboxWithAiController(mockKataGo = {}) {
   return ctx;
 }
 
-module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, createMockLocalStorage };
+function createMainLifecycleElement(id = '') {
+  const listeners = {};
+  const children = [];
+  const classNames = new Set();
+  const el = {
+    id,
+    style: {},
+    children,
+    className: '',
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    checked: false,
+    disabled: false,
+    width: id === 'board' ? 600 : 0,
+    height: id === 'board' ? 600 : 0,
+    clientWidth: 0,
+    scrollWidth: 0,
+    scrollLeft: 0,
+    parentElement: null,
+    classList: {
+      add: (...names) => names.forEach((name) => classNames.add(name)),
+      remove: (...names) => names.forEach((name) => classNames.delete(name)),
+      toggle: (name, force) => {
+        if (force === true) classNames.add(name);
+        else if (force === false) classNames.delete(name);
+        else if (classNames.has(name)) classNames.delete(name);
+        else classNames.add(name);
+        return classNames.has(name);
+      },
+      contains: (name) => classNames.has(name)
+    },
+    addEventListener(type, fn) {
+      (listeners[type] = listeners[type] || []).push(fn);
+    },
+    dispatchEvent(event) {
+      for (const fn of listeners[event.type] || []) fn(event);
+      return true;
+    },
+    appendChild(child) {
+      children.push(child);
+      child.parentElement = el;
+      return child;
+    },
+    append(...items) {
+      items.forEach((item) => {
+        if (item && typeof item === 'object') item.parentElement = el;
+        children.push(item);
+      });
+    },
+    after() {},
+    remove() {},
+    replaceWith() {},
+    setAttribute() {},
+    getContext: () => ({}),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 600, height: 600 }),
+    querySelector: () => children.find((child) => child && typeof child === 'object') || null,
+    querySelectorAll: () => [],
+    scrollBy() {},
+    setPointerCapture() {},
+    releasePointerCapture() {}
+  };
+  return el;
+}
+
+/**
+ * 載入真實 main.js 與 GameState，僅替換引擎、音訊、商店與其他棋類等外部邊界。
+ * 用於驗證圍棋主流程在瀏覽器生命週期中的可觀察狀態與控制項結果。
+ */
+function sandboxWithMainLifecycle({ storage = {}, hash = '#home', confirmResult = true } = {}) {
+  const localStorage = createMockLocalStorage();
+  Object.entries(storage).forEach(([key, value]) => localStorage.setItem(key, value));
+
+  const elements = {};
+  const elementDefaults = {
+    boardSize: { value: '9' },
+    gameMode: { value: 'pvc' },
+    playerColor: { value: '1' },
+    aiLevelMode: { value: 'auto' },
+    aiManualLevel: { value: '1' },
+    timerToggle: { checked: false },
+    timerMinutes: { value: '10' },
+    gameRules: { value: 'chinese' },
+    handicap: { value: '0' },
+    emotionToggle: { checked: false },
+    reviewToggle: { checked: true },
+    undoToggle: { checked: true }
+  };
+  const getElement = (id) => {
+    if (!elements[id]) {
+      elements[id] = createMainLifecycleElement(id);
+      Object.assign(elements[id], elementDefaults[id] || {});
+      if (id === 'homeMenu') elements[id].parentElement = createMainLifecycleElement('homeScreen');
+    }
+    return elements[id];
+  };
+  const document = createMockEventTarget({
+    title: '',
+    getElementById: getElement,
+    createElement: (tag) => createMainLifecycleElement(tag),
+    querySelector: (selector) => selector === 'h1' ? getElement('pageTitle') : null,
+    querySelectorAll: () => []
+  });
+  const windowTarget = createMockEventTarget();
+  const confirm = jest.fn(() => confirmResult);
+  const location = { hash, hostname: 'example.test', port: '' };
+
+  const noop = () => {};
+  const moduleMocks = {
+    './ui.js': {
+      GoUI: {
+        drawBoard: noop,
+        updateHUD: noop,
+        setStatus: noop,
+        syncStatus: noop,
+        updateScoringDisplay: noop,
+        updateReviewInfo: noop,
+        updateReviewAnalysisInfo: noop,
+        drawWinrateGraph: noop
+      }
+    },
+    './sound.js': { GoSound: {} },
+    './timer.js': {
+      GoTimer: {
+        init: noop,
+        start: noop,
+        switch: noop,
+        stop: noop,
+        updateDisplay: noop
+      }
+    },
+    './hints.js': { GoHints: { getCaptureHints: () => [] } },
+    './sgf-export.js': { shareOrDownloadSgf: async () => 'downloaded' },
+    './go-settings.js': { openGoSettings: noop, closeGoSettings: noop, toggleGoSettings: noop },
+    './ai-controller.js': { makeAiController: () => ({ requestAIMove: noop }) },
+    './event-handlers.js': { registerEventHandlers: noop },
+    './gomoku-mode.js': { enterGomokuMode: noop },
+    './connect6-mode.js': { enterConnect6Mode: noop },
+    './othello-mode.js': { enterOthelloMode: noop },
+    './tsumego-progress.js': { loadProgress: () => ({}), totalSolved: () => 0 },
+    './ink-fx.js': { playTitleReveal: noop, startAmbient: noop, playTransition: (fn) => fn() },
+    './katago-service.js': {
+      ensureReady: async () => {},
+      suggest: async () => ({}),
+      evaluate: async () => ({}),
+      scoreGame: async () => ({ ownership: null })
+    },
+    './entitlements.js': {
+      isPremium: () => true,
+      remainingQuota: () => 1,
+      consumeQuota: noop
+    },
+    './store-service.js': {
+      storeAvailable: () => false,
+      getFullVersionPrice: async () => '',
+      purchaseFullVersion: async () => ({ ok: true }),
+      restoreFullVersion: async () => ({ owned: true, message: '' }),
+      syncEntitlements: async () => {}
+    },
+    './audio-manager.js': { initAudio: noop, loadSfxPack: noop, playSfx: noop },
+    './audio-settings-ui.js': { renderAudioControls: noop, initAudioMuteButtons: noop },
+    './stats.js': {
+      recordGame: (state) => state,
+      totals: () => ({ wins: 0, losses: 0, draws: 0 }),
+      formatRecord: () => '',
+      loadStats: () => ({}),
+      saveStats: noop
+    }
+  };
+
+  const { ctx, localRequire } = createSandbox({
+    localStorage,
+    document,
+    navigator: {},
+    location,
+    fetch: async () => ({ ok: false }),
+    confirm,
+    matchMedia: () => ({ matches: false }),
+    addEventListener: windowTarget.addEventListener,
+    removeEventListener: windowTarget.removeEventListener,
+    dispatchEvent: windowTarget.dispatchEvent,
+    __IOS_STORE__: false
+  }, moduleMocks);
+  loadIntoContext(ctx, localRequire, './main.js');
+  const gameState = localRequire('./game-state.js');
+  return { ctx, GameState: gameState, elements, localStorage, confirm };
+}
+
+module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };

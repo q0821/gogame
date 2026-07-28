@@ -1243,7 +1243,8 @@ function syncStatus(message = '') {
 // ==================== NEW GAME ====================
 // 進行中對局誤觸保護：有落子且尚未結束時，先確認再開新局，避免清掉進度。
 function newGame() {
-  if (moveHistory.length > 0 && !gameOver) {
+  const state = getGoState();
+  if (state.moveHistory.length > 0 && !state.gameOver) {
     if (!window.confirm('目前有進行中的對局，開新局會清掉它。確定要重新開始嗎？')) return;
   }
   startNewGame();
@@ -1268,7 +1269,6 @@ function startNewGame() {
   } else {
     aiLevel = loadAiLevel();
   }
-  updateAiLevelDisplay();
   timerEnabled = document.getElementById('timerToggle').checked;
   gameRules = document.getElementById('gameRules').value;
   komi = gameRules === 'japanese' ? 6.5 : 7.5;
@@ -1290,6 +1290,10 @@ function startNewGame() {
     handicap, board: handicapBoard, currentPlayer: handicapFirstPlayer,
   });
   applyStateFromStore();
+  const state = getGoState();
+  updateAiLevelDisplay();
+  const manualSel = document.getElementById('aiManualLevel');
+  if (manualSel) manualSel.value = String(state.aiLevel);
 
   emotionEnabled  = document.getElementById('emotionToggle').checked;
 
@@ -1372,13 +1376,16 @@ function loadGame() {
     if (!s || !s.board) return false;
 
     GameState.restoreSnapshot(s);
+    GameState.setAiLevel(loadAiLevel());
     applyStateFromStore();
+    const state = getGoState();
 
     document.getElementById('boardSize').value = size;
     document.getElementById('gameMode').value = gameMode;
     document.getElementById('playerColor').value = playerColor;
-    aiLevel = loadAiLevel();
     updateAiLevelDisplay();
+    const manualSel = document.getElementById('aiManualLevel');
+    if (manualSel) manualSel.value = String(state.aiLevel);
     document.getElementById('timerToggle').checked = timerEnabled;
     document.getElementById('gameRules').value = gameRules;
     document.getElementById('playerColorGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
@@ -1590,6 +1597,7 @@ Object.defineProperty(window, 'moveHistory', {
 
 // ==================== INIT ====================
 registerEventHandlers(app);
+GameState.setAiLevel(loadAiLevel());
 updateAiLevelDisplay();
 initAiLevelControls();
 // IAP 權益啟動校正（原生 App 內才有動作；失敗不影響啟動）；
