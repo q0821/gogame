@@ -876,24 +876,40 @@ function _timerOnTimeout(losingPlayer) {
   endGame(`${winner === BLACK ? '黑方' : '白方'}勝`, `${losingPlayer === BLACK ? '黑' : '白'}方超時`, outcomeFor(winner));
 }
 
+function timerOptions() {
+  return {
+    getTimerSeconds: () => GameState.getState().timerSeconds,
+    setTimerSeconds: (seconds) => {
+      GameState.setTimerSeconds(seconds);
+      timerSeconds = { ...GameState.getState().timerSeconds };
+    },
+    getCurrentPlayer: () => GameState.getState().currentPlayer,
+    onTimeout: _timerOnTimeout
+  };
+}
+
 function initTimer() {
   const minutes = parseInt(document.getElementById('timerMinutes').value);
-  GoTimer.init(timerSeconds, minutes);
+  GoTimer.init(minutes, timerOptions().setTimerSeconds);
 }
 
 function startTimer() {
-  if (!timerEnabled) return;
-  GoTimer.start(timerSeconds, () => currentPlayer, _timerOnTimeout);
+  if (!GameState.getState().timerEnabled) return;
+  GoTimer.start(timerOptions());
 }
 
 function switchTimer() {
-  if (!timerEnabled) return;
-  GoTimer.switch(timerSeconds, () => currentPlayer, _timerOnTimeout);
+  if (!GameState.getState().timerEnabled) return;
+  GoTimer.switch(timerOptions());
 }
 
-function stopTimer() { GoTimer.stop(); }
+function stopTimer() {
+  GoTimer.stop();
+}
 
-function updateTimerDisplay() { GoTimer.updateDisplay(timerSeconds); }
+function updateTimerDisplay() {
+  GoTimer.updateDisplay(GameState.getState().timerSeconds);
+}
 
 // ==================== REVIEW ====================
 function enterReview() {
