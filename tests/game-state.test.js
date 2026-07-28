@@ -121,15 +121,10 @@ describe('applyMove', () => {
   test('suicide move returns reason:suicide', () => {
     // Surround (0,0) with WHITE on a 9x9 so BLACK playing there is suicide.
     // B(0,0) 相鄰: (0,1) 與 (1,0)；先讓白佔滿即可構造自殺手。
-    GameState.sync({
-      board: (() => {
-        const b = GoRules.createBoard(9);
-        b[0][1] = WHITE;
-        b[1][0] = WHITE;
-        return b;
-      })(),
-      currentPlayer: BLACK,
-    });
+    const board = GoRules.createBoard(9);
+    board[0][1] = WHITE;
+    board[1][0] = WHITE;
+    GameState.resetState({ size: 9, board, currentPlayer: BLACK });
     const result = GameState.applyMove(0, 0);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('suicide');
@@ -140,12 +135,11 @@ describe('applyMove', () => {
     //  . B W .
     //  B W . W  <- black plays at (1,2) captures W at (1,1) → ko at (1,1)
     //  . B W .
-    GameState.resetState({ size: 7 });
     const b = GoRules.createBoard(7);
     b[0][1] = BLACK; b[2][1] = BLACK; b[1][0] = BLACK;
     b[1][1] = WHITE;
     b[0][2] = WHITE; b[2][2] = WHITE; b[1][3] = WHITE;
-    GameState.sync({ board: b, currentPlayer: BLACK });
+    GameState.resetState({ size: 7, board: b, currentPlayer: BLACK });
     const capture = GameState.applyMove(1, 2); // BLACK captures, sets koPoint at (1,1)
     expect(capture.ok).toBe(true);
     expect(GameState.getState().koPoint).toEqual([1, 1]);
@@ -209,7 +203,7 @@ describe('applyPass', () => {
   });
 
   test('pass clears koPoint', () => {
-    GameState.sync({ koPoint: [3, 3] });
+    GameState.resetState({ size: 9, koPoint: [3, 3] });
     GameState.applyPass();
     expect(GameState.getState().koPoint).toBeNull();
   });
@@ -476,34 +470,5 @@ describe('semantic state mutations', () => {
     GameState.markGameOver();
     expect(GameState.getState().gameOver).toBe(true);
     expect(GameState.getState().isAIThinking).toBe(false);
-  });
-});
-
-// ─── sync ────────────────────────────────────────────────────────────────────
-
-describe('sync', () => {
-  beforeEach(() => GameState.resetState({ size: 9 }));
-
-  test('sync updates specified fields', () => {
-    GameState.sync({ passCount: 1, gameOver: true });
-    const s = GameState.getState();
-    expect(s.passCount).toBe(1);
-    expect(s.gameOver).toBe(true);
-  });
-
-  test('sync does not touch unspecified fields', () => {
-    GameState.applyMove(4, 4);
-    const before = GameState.getState().board[4][4];
-    GameState.sync({ passCount: 2 });
-    expect(GameState.getState().board[4][4]).toBe(before);
-  });
-
-  test('sync with deadStones stores a Set-like object', () => {
-    GameState.sync({ deadStones: [5, 10] });
-    const ds = GameState.getState().deadStones;
-    // Use duck-typing: vm sandbox Set !== outer Set, so avoid instanceof
-    expect(typeof ds.has).toBe('function');
-    expect(ds.has(5)).toBe(true);
-    expect(ds.has(10)).toBe(true);
   });
 });

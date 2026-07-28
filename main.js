@@ -44,36 +44,11 @@ const STAR_POINTS = {
 };
 
 // ==================== GAME STATE ====================
-let komi = 7.5;
-let gameRules = 'chinese';
-
-let size = 19;
-let board = [];
-let currentPlayer = BLACK;
-let captures = { [BLACK]: 0, [WHITE]: 0 };
-let moveHistory = [];
-let boardHistory = [];
-let koPoint = null;
-let passCount = 0;
-let gameOver = false;
-let gameMode = 'pvc';
-let playerColor = BLACK;
 // 自適應難度：aiLevel 現在是「電腦等級」(1..MAX)，依戰績自動升降，獨立存於 localStorage。
 // aiLevelMode：'auto'（自適應升降）| 'manual'（手動選級、不升降），同樣持久化。
 const AI_LEVEL_KEY = 'gogame_ai_level';
 const AI_LEVEL_MODE_KEY = 'gogame_ai_level_mode';
-let aiLevel = loadAiLevel();
 let aiLevelMode = loadAiLevelMode();
-let isAIThinking = false;
-
-let timerEnabled = false;
-let timerSeconds = { [BLACK]: 600, [WHITE]: 600 };
-
-let isReviewing = false;
-let currentReviewMove = 0;
-
-let isScoring = false;
-let deadStones = new Set();
 let showingHint = false;
 let suggestMove = null; // KataGo 建議走法 [row,col]，null=不顯示
 let _suggestBusy = false;
@@ -89,7 +64,6 @@ const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
 let cellSize = 30;
 let padding = 40;
-let lastMove = null;
 let hoverPos = null;
 
 // ==================== GameState proxy ====================
@@ -598,8 +572,8 @@ function doUndo() {
 
 function doResign() {
   // 同 doUndo()：AI 回合中（isAIThinking=true）認輸會在 katagoMove() 仍在跑時就把
-  // gameOver 設為 true，該 promise 事後 resolve 時 aiController 仍會嘗試同步舊鏡像／
-  // placeStone，對已結束的對局動手。isGameBusy() 才會把 isAIThinking 一併擋下。
+  // gameOver 設為 true，該 promise 事後 resolve 時 aiController 仍會嘗試 placeStone，
+  // 對已結束的對局動手。isGameBusy() 才會把 isAIThinking 一併擋下。
   if (isGameBusy()) return;
   // 認輸不可逆且會影響自適應等級，先確認避免誤觸（比照「重新開始」的既有做法）。
   if (!window.confirm('確定要認輸嗎？這局將以對方獲勝結束。')) return;
@@ -991,10 +965,7 @@ function _timerOnTimeout(losingPlayer) {
 function timerOptions() {
   return {
     getTimerSeconds: () => getGoState().timerSeconds,
-    setTimerSeconds: (seconds) => {
-      GameState.setTimerSeconds(seconds);
-      timerSeconds = { ...getGoState().timerSeconds };
-    },
+    setTimerSeconds: (seconds) => GameState.setTimerSeconds(seconds),
     getCurrentPlayer: () => getGoState().currentPlayer,
     onTimeout: _timerOnTimeout
   };
@@ -1252,46 +1223,66 @@ function newGame() {
 
 function startNewGame() {
   const rawSize = parseInt(document.getElementById('boardSize').value);
-  size = VALID_BOARD_SIZES.includes(rawSize) ? rawSize : 19;
+  const selectedSize = VALID_BOARD_SIZES.includes(rawSize) ? rawSize : 19;
 
   const rawMode = document.getElementById('gameMode').value;
-  gameMode = VALID_GAME_MODES.includes(rawMode) ? rawMode : 'pvc';
+  const selectedMode = VALID_GAME_MODES.includes(rawMode) ? rawMode : 'pvc';
 
-  playerColor = parseInt(document.getElementById('playerColor').value);
+  let selectedPlayerColor = parseInt(document.getElementById('playerColor').value);
   // aiLevel：自動模式由自適應系統管理；手動模式由設定面板選定（該局不升降）。
-  const modeSel = document.getElementById('aiLevelMode');
-  aiLevelMode = (modeSel && modeSel.value === 'manual' && premiumUnlocked()) ? 'manual' : 'auto';
+  const levelModeElement = document.getElementById('aiLevelMode');
+  aiLevelMode = (
+    levelModeElement
+    && levelModeElement.value === 'manual'
+    && premiumUnlocked()
+  ) ? 'manual' : 'auto';
   saveAiLevelMode();
+
+  let selectedAiLevel;
   if (aiLevelMode === 'manual') {
-    const lv = parseInt(document.getElementById('aiManualLevel')?.value);
-    aiLevel = levelConfig(Number.isFinite(lv) ? lv : MIN_LEVEL).level;
-    saveAiLevel(aiLevel);
+    const manualLevel = parseInt(document.getElementById('aiManualLevel')?.value);
+    selectedAiLevel = levelConfig(
+      Number.isFinite(manualLevel) ? manualLevel : MIN_LEVEL
+    ).level;
+    saveAiLevel(selectedAiLevel);
   } else {
-    aiLevel = loadAiLevel();
+    selectedAiLevel = loadAiLevel();
   }
-  timerEnabled = document.getElementById('timerToggle').checked;
-  gameRules = document.getElementById('gameRules').value;
-  komi = gameRules === 'japanese' ? 6.5 : 7.5;
+
+  const selectedTimerEnabled = document.getElementById('timerToggle').checked;
+  const selectedRules = document.getElementById('gameRules').value;
+  let selectedKomi = selectedRules === 'japanese' ? 6.5 : 7.5;
 
   // 讓子（S6）：只在 PvC 生效。讓子＝人執黑（拿讓子）、AI 執白先下、白貼 0.5 目。
-  const handicapEl = document.getElementById('handicap');
-  let handicap = handicapEl ? parseInt(handicapEl.value) || 0 : 0;
-  if (gameMode !== 'pvc' || handicap < 2) handicap = 0;
+  const handicapElement = document.getElementById('handicap');
+  let handicap = handicapElement ? parseInt(handicapElement.value) || 0 : 0;
+  if (selectedMode !== 'pvc' || handicap < 2) handicap = 0;
+
   let handicapBoard, handicapFirstPlayer;
   if (handicap >= 2) {
-    playerColor = BLACK;                          // 人固定執黑
-    handicapBoard = placeHandicap(size, handicap); // 預置黑讓子
-    handicapFirstPlayer = WHITE;                    // 白（AI）先下
-    komi = 0.5;
+    selectedPlayerColor = BLACK;
+    handicapBoard = placeHandicap(selectedSize, handicap);
+    handicapFirstPlayer = WHITE;
+    selectedKomi = 0.5;
   }
 
-  GameState.startGame({
-    size, gameMode, playerColor, aiLevel, timerEnabled, timerSeconds, gameRules, komi,
-    handicap, board: handicapBoard, currentPlayer: handicapFirstPlayer,
-  });
-  applyStateFromStore();
-  const state = getGoState();
+  const nextGame = {
+    size: selectedSize,
+    gameMode: selectedMode,
+    playerColor: selectedPlayerColor,
+    aiLevel: selectedAiLevel,
+    timerEnabled: selectedTimerEnabled,
+    timerSeconds: { [BLACK]: 600, [WHITE]: 600 },
+    gameRules: selectedRules,
+    komi: selectedKomi,
+    handicap,
+    board: handicapBoard,
+    currentPlayer: handicapFirstPlayer,
+  };
+
+  GameState.startGame(nextGame);
   updateAiLevelDisplay();
+  const state = getGoState();
   const manualSel = document.getElementById('aiManualLevel');
   if (manualSel) manualSel.value = String(state.aiLevel);
 
@@ -1307,10 +1298,14 @@ function startNewGame() {
   liveOwnership = null;
 
   stopTimer();
-  if (timerEnabled) { initTimer(); startTimer(); }
+  if (state.timerEnabled) { initTimer(); startTimer(); }
 
   // AI 先手 = PvC 且開局輪到的不是玩家（含讓子局：白＝AI 先下）。
-  const aiStartsGame = gameMode === 'pvc' && currentPlayer !== playerColor && !gameOver;
+  const aiStartsGame = (
+    state.gameMode === 'pvc'
+    && state.currentPlayer !== state.playerColor
+    && !state.gameOver
+  );
   updateUI();
   syncStatus(aiStartsGame ? 'AI 思考中...' : '');
   drawBoard();
@@ -1326,46 +1321,14 @@ function startNewGame() {
 // ==================== SAVE / RESTORE ====================
 const SAVE_KEY = 'gogame_state';
 
-function applyStateFromStore() {
-  const s = GameState.getState();
-  size = s.size;
-  board = s.board.map(r => [...r]);
-  currentPlayer = s.currentPlayer;
-  captures = { ...s.captures };
-  moveHistory = (s.moveHistory || []).map(m => ({ ...m }));
-  boardHistory = (s.boardHistory || []).map(h => ({
-    board: h.board.map(r => [...r]),
-    captures: { ...h.captures },
-    koPoint: h.koPoint,
-    currentPlayer: h.currentPlayer,
-    lastMove: h.lastMove,
-    passCount: h.passCount
-  }));
-  koPoint = s.koPoint;
-  passCount = s.passCount;
-  gameOver = s.gameOver;
-  lastMove = s.lastMove;
-  gameMode = s.gameMode;
-  playerColor = s.playerColor;
-  aiLevel = s.aiLevel;
-  timerEnabled = s.timerEnabled;
-  timerSeconds = { ...s.timerSeconds };
-  gameRules = s.gameRules;
-  komi = s.komi;
-  isReviewing = s.isReviewing;
-  currentReviewMove = s.currentReviewMove;
-  isScoring = s.isScoring;
-  deadStones = new Set(s.deadStones || []);
-  isAIThinking = !!s.isAIThinking;
-  syncStatus();
-}
-
 function saveGame() {
   const state = getGoState();
   if (state.isReviewing || state.isScoring) return;
-  GameState.sync({ timerSeconds });
+  if (state.timerEnabled) GoTimer.sync();
   const snapshot = GameState.getSnapshot();
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot)); } catch(e) {}
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
+  } catch (_) {}
 }
 
 function loadGame() {
@@ -1377,38 +1340,41 @@ function loadGame() {
 
     GameState.restoreSnapshot(s);
     GameState.setAiLevel(loadAiLevel());
-    applyStateFromStore();
     const state = getGoState();
 
-    document.getElementById('boardSize').value = size;
-    document.getElementById('gameMode').value = gameMode;
-    document.getElementById('playerColor').value = playerColor;
+    document.getElementById('boardSize').value = state.size;
+    document.getElementById('gameMode').value = state.gameMode;
+    document.getElementById('playerColor').value = state.playerColor;
     updateAiLevelDisplay();
     const manualSel = document.getElementById('aiManualLevel');
     if (manualSel) manualSel.value = String(state.aiLevel);
-    document.getElementById('timerToggle').checked = timerEnabled;
-    document.getElementById('gameRules').value = gameRules;
-    document.getElementById('playerColorGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
-    document.getElementById('aiStrengthGroup').style.display = gameMode === 'pvc' ? 'block' : 'none';
-    const handicapState = getGoState().handicap || 0;
+    document.getElementById('timerToggle').checked = state.timerEnabled;
+    document.getElementById('gameRules').value = state.gameRules;
+    document.getElementById('playerColorGroup').style.display = state.gameMode === 'pvc' ? 'block' : 'none';
+    document.getElementById('aiStrengthGroup').style.display = state.gameMode === 'pvc' ? 'block' : 'none';
+    const handicapState = state.handicap || 0;
     const hg = document.getElementById('handicapGroup');
-    if (hg) hg.style.display = gameMode === 'pvc' ? 'block' : 'none';
+    if (hg) hg.style.display = state.gameMode === 'pvc' ? 'block' : 'none';
     const hSel = document.getElementById('handicap');
     if (hSel) hSel.value = String(handicapState);
     document.getElementById('playerColor').disabled = handicapState >= 2;
-    document.getElementById('timerSettings').style.display = timerEnabled ? 'block' : 'none';
-    document.getElementById('timerArea').style.display = timerEnabled ? 'block' : 'none';
-    if (timerEnabled) updateTimerDisplay();
-    if (gameOver && document.getElementById('reviewToggle').checked) {
+    document.getElementById('timerSettings').style.display = state.timerEnabled ? 'block' : 'none';
+    document.getElementById('timerArea').style.display = state.timerEnabled ? 'block' : 'none';
+    if (state.timerEnabled) updateTimerDisplay();
+    if (state.gameOver && document.getElementById('reviewToggle').checked) {
       document.getElementById('reviewBtn').style.display = 'block';
     }
 
     updateUI();
     drawBoard();
-    syncStatus(gameOver ? '遊戲結束 — 可覆盤或開始新局' : `已恢復棋局（第 ${moveHistory.length} 手）`);
+    syncStatus(state.gameOver ? '遊戲結束 — 可覆盤或開始新局' : `已恢復棋局（第 ${state.moveHistory.length} 手）`);
 
     // 不預載引擎；若恢復後輪到 AI，直接求手（KataGo 優先、lazy）。
-    if (gameMode === 'pvc' && !gameOver && currentPlayer !== playerColor) {
+    if (
+      state.gameMode === 'pvc'
+      && !state.gameOver
+      && state.currentPlayer !== state.playerColor
+    ) {
       setTimeout(() => aiController.requestAIMove(), AI_INIT_DELAY_MS);
     }
     return true;

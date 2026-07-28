@@ -196,37 +196,6 @@ export function markGameOver() {
   return current;
 }
 
-export function sync(partialState = {}) {
-  const current = ensureState();
-  if (Object.prototype.hasOwnProperty.call(partialState, 'board')) current.board = cloneBoard(partialState.board);
-  if (Object.prototype.hasOwnProperty.call(partialState, 'currentPlayer')) current.currentPlayer = partialState.currentPlayer;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'captures')) current.captures = cloneCaptures(partialState.captures);
-  if (Object.prototype.hasOwnProperty.call(partialState, 'moveHistory')) current.moveHistory = cloneMoveHistory(partialState.moveHistory);
-  if (Object.prototype.hasOwnProperty.call(partialState, 'boardHistory')) current.boardHistory = cloneBoardHistory(partialState.boardHistory);
-  if (Object.prototype.hasOwnProperty.call(partialState, 'koPoint')) current.koPoint = partialState.koPoint ? [...partialState.koPoint] : null;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'passCount')) current.passCount = partialState.passCount;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'gameOver')) current.gameOver = partialState.gameOver;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'lastMove')) current.lastMove = partialState.lastMove ? [...partialState.lastMove] : null;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'gameMode')) current.gameMode = partialState.gameMode;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'playerColor')) current.playerColor = partialState.playerColor;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'aiLevel')) current.aiLevel = partialState.aiLevel;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'timerEnabled')) current.timerEnabled = partialState.timerEnabled;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'timerSeconds')) {
-    current.timerSeconds = {
-      [BLACK]: partialState.timerSeconds[BLACK] ?? partialState.timerSeconds[1] ?? current.timerSeconds[BLACK],
-      [WHITE]: partialState.timerSeconds[WHITE] ?? partialState.timerSeconds[2] ?? current.timerSeconds[WHITE]
-    };
-  }
-  if (Object.prototype.hasOwnProperty.call(partialState, 'gameRules')) current.gameRules = partialState.gameRules;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'komi')) current.komi = partialState.komi;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'isReviewing')) current.isReviewing = partialState.isReviewing;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'currentReviewMove')) current.currentReviewMove = partialState.currentReviewMove;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'isScoring')) current.isScoring = partialState.isScoring;
-  if (Object.prototype.hasOwnProperty.call(partialState, 'deadStones')) current.deadStones = new Set(partialState.deadStones);
-  if (Object.prototype.hasOwnProperty.call(partialState, 'isAIThinking')) current.isAIThinking = partialState.isAIThinking;
-  return current;
-}
-
 function buildUndoEntry(current) {
   return {
     board: cloneBoard(current.board),
@@ -396,7 +365,7 @@ resetState();
 
 export const GameState = {
   createInitialState, resetState, getState, getSnapshot, restoreSnapshot,
-  sync, setAIThinking, setAiLevel, setTimerSeconds, setDeadStones, markGameOver,
+  setAIThinking, setAiLevel, setTimerSeconds, setDeadStones, markGameOver,
   applyMove, applyPass, undo, startGame,
   beginScoring, cancelScoring, confirmScoring, toggleDeadGroup,
   enterReview, exitReview, reviewGo
