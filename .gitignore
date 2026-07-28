@@ -5,6 +5,7 @@ dist/
 .playwright-mcp/
 .gstack/
 .superpowers/
+.worktrees/
 spike-photos/
 spike-photos-real/
 opencv.js
