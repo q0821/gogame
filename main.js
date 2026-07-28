@@ -904,6 +904,10 @@ function cancelScoring() {
   saveGame();
   document.getElementById('scoringPanel').style.display = 'none';
   setStatus('已取消數目，繼續對弈');
+  // 雙虛手進入數目時 applyPass() 已換手，取消後 currentPlayer 與上一次寫進 HUD 的值不同；
+  // 少了這行，回合徽章（#mobileTurn，唯一寫入點是 GoUI.updateHUD()）會停在舊的一方，
+  // 使用者以為輪白、點下去卻出現黑子，直到下一手落子才更新。
+  updateUI();
   drawBoard();
 
   // 取消數目讓對局從「不可下」回到「可下」，手番也可能落在 AI 身上：雙虛手進入數目時
@@ -1312,6 +1316,12 @@ function startNewGame() {
     currentPlayer: handicapFirstPlayer,
   };
 
+  // 必須在 startGame() 之前停鐘：GoTimer.stop() 會把「上一手開始剩餘 − 已流逝」回寫給
+  // 目前的 activePlayer，而寫入端（timerOptions().setTimerSeconds）永遠指向當下的
+  // GameState。排在 startGame() 之後停，等於把上一局的殘餘秒數寫進新局狀態（並被
+  // saveGame() 存進 snapshot）。先停鐘則定格值落在即將被丟棄的舊局狀態上，語意正確。
+  stopTimer();
+
   GameState.startGame(nextGame);
   updateAiLevelDisplay();
   const state = getGoState();
@@ -1329,7 +1339,6 @@ function startNewGame() {
   clearReviewAnalysis();
   liveOwnership = null;
 
-  stopTimer();
   if (state.timerEnabled) { initTimer(); startTimer(); }
 
   // AI 先手 = PvC 且開局輪到的不是玩家（含讓子局：白＝AI 先下）。

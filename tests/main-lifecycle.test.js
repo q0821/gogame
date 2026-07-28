@@ -413,6 +413,51 @@ describe('圍棋主流程狀態生命週期', () => {
     ]);
   });
 
+  test('雙虛手取消數目後，UI 層收到的回合與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+
+    sandbox.ctx.doPass(); // 黑虛手 → UI 收到「輪白」
+    sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目（此路徑不經 updateUI）
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    sandbox.ctx.cancelScoring();
+
+    // 回合徽章（#mobileTurn）的唯一寫入點是 ui.js 的 updateHUD()，而 updateHUD() 只由
+    // updateUI() 呼叫。取消數目後 currentPlayer 已換手成黑，若沒有把最新狀態送進 UI 層，
+    // 徽章會停在上一次寫入的「白方」，使用者以為輪白、點下去卻出現黑子。
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiCurrentPlayer: lastHud.currentPlayer,
+      stateCurrentPlayer: state.currentPlayer
+    }).toEqual({
+      uiCurrentPlayer: 1,
+      stateCurrentPlayer: 1
+    });
+  });
+
+  test('計時對局後開一局不計時新局，不會把上一局剩餘秒數帶進新局', () => {
+    const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
+    startTimedGame(sandbox, { minutes: 5 });
+    sandbox.clock.advance(60_000);
+    sandbox.clock.tick();
+    expect(sandbox.GameState.getState().timerSeconds[1]).toBe(240);
+
+    sandbox.ctx.document.getElementById('timerToggle').checked = false;
+    sandbox.ctx.startNewGame();
+
+    // 新局是 startGame() 寫入的 600／600；停掉上一局的鐘不該把舊局殘餘秒數回寫進新局狀態，
+    // 也不該被存進 snapshot。
+    const state = sandbox.GameState.getState();
+    const snapshot = readSavedGame(sandbox.localStorage);
+    expect({ live: state.timerSeconds, saved: snapshot.timerSeconds }).toEqual({
+      live: { 1: 600, 2: 600 },
+      saved: { 1: 600, 2: 600 }
+    });
+  });
+
   test('PvC 悔棋後輪到 AI 就排求手、輪到人類就不排', () => {
     const actual = [1, 2].map((playerColor) => {
       const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });

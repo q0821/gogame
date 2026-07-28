@@ -504,11 +504,25 @@ function sandboxWithMainLifecycle({
 
   const noop = () => {};
   const requestAIMove = jest.fn();
+  // 記錄 main.js 每次交給 UI 層的狀態。真實 ui.js 的 updateHUD() 是 #mobileTurn 回合徽章
+  // 的唯一寫入點，而 sandbox 把 ui.js 整組換成 noop，UI 層等於零覆蓋。這裡改成記錄器，
+  // 讓測試能觀察「main.js 有沒有在狀態變動後把最新回合送進 UI 層」這條真實資料流。
+  // 注意：updateHUD() 收到的是 GameState 的活物件，留存參照之後會讀到「當下」而非
+  // 「呼叫當時」的值，因此在呼叫點就抄下決定徽章內容的欄位（與 ui.js updateHUD 的
+  // 判斷輸入相同），否則斷言會恆真、失去鑑別力。
+  const hudUpdates = [];
   const moduleMocks = {
     './ui.js': {
       GoUI: {
         drawBoard: noop,
-        updateHUD: noop,
+        updateHUD: (state) => {
+          hudUpdates.push({
+            currentPlayer: state.currentPlayer,
+            gameOver: !!state.gameOver,
+            isAIThinking: !!state.isAIThinking,
+            moveCount: state.moveHistory.length
+          });
+        },
         setStatus: noop,
         syncStatus: noop,
         updateScoringDisplay: noop,
@@ -603,7 +617,7 @@ function sandboxWithMainLifecycle({
   }, moduleMocks);
   loadIntoContext(ctx, localRequire, './main.js');
   const gameState = localRequire('./game-state.js');
-  return { ctx, GameState: gameState, elements, localStorage, confirm, clock, requestAIMove };
+  return { ctx, GameState: gameState, elements, localStorage, confirm, clock, requestAIMove, hudUpdates };
 }
 
 module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };
