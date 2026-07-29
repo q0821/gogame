@@ -579,21 +579,29 @@ describe('圍棋主流程狀態生命週期', () => {
     const sandbox = sandboxWithMainLifecycle({});
     sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
     sandbox.ctx.startNewGame();
-    // 白在 (0,1)(1,0) 圍住黑 (0,0)，第 4 手提掉一子。
-    sandbox.GameState.applyMove(0, 0); // 黑
-    sandbox.GameState.applyMove(0, 1); // 白
-    sandbox.GameState.applyMove(5, 5); // 黑
-    sandbox.ctx.doPass();              // 白虛手，讓 main.js 走一次 updateUI()
+    // 黑 (0,0) 在角上只有兩口氣；白補上 (0,1)(1,0) 兩口，第 4 手真的提掉一子。
+    sandbox.GameState.applyMove(0, 0); // 黑 (0,0)
+    sandbox.GameState.applyMove(0, 1); // 白，堵第一口氣
+    sandbox.GameState.applyMove(5, 5); // 黑，別處
+    sandbox.GameState.applyMove(1, 0); // 白，堵第二口氣 → 提黑一子
+    sandbox.ctx.doPass();              // 黑虛手（第 5 手），讓 main.js 走一次 updateUI()
 
     const state = sandbox.GameState.getState();
+    // 防斷言落空：提子數若是 0，下面的「與 GameState 一致」用兩個 0 也會通過，
+    // 等於連「有沒有讀錯邊」都測不出來。先確認真的提到子、而且提子記在白方名下。
+    expect(state.board[0][0]).toBe(0);
+    expect(state.captures).toEqual({ 1: 0, 2: 1 });
+
     expect({
-      cap: sandbox.elements.mobileBlackCap.textContent,
+      blackCap: sandbox.elements.mobileBlackCap.textContent,
+      whiteCap: sandbox.elements.mobileWhiteCap.textContent,
       moves: sandbox.elements.mobileMoveCount.textContent,
       turn: sandbox.elements.mobileTurn.textContent
     }).toEqual({
-      cap: state.captures[1],
+      blackCap: state.captures[1],
+      whiteCap: state.captures[2],
       moves: state.moveHistory.length,
-      turn: '黑方'
+      turn: '白方'
     });
   });
 
