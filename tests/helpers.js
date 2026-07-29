@@ -428,6 +428,11 @@ function createMainLifecycleElement(id = '') {
 /**
  * 載入真實 main.js 與 GameState，僅替換引擎、音訊、商店與其他棋類等外部邊界。
  * 用於驗證圍棋主流程在瀏覽器生命週期中的可觀察狀態與控制項結果。
+ *
+ * @param {boolean} useRealTimer 只決定一件事：要不要載入真實的 './timer.js'
+ *   （false 時換成 noop mock）。**不再控制假 scheduler**——`clock.advance/tick/
+ *   runTimeouts` 依賴的假 Date / setTimeout / setInterval 一律安裝，見下方注入處。
+ *   名稱刻意不改：改名會讓仍傳舊名的呼叫點被解構預設值靜默忽略，正是這裡要根治的問題類型。
  */
 function sandboxWithMainLifecycle({
   storage = {},
@@ -595,25 +600,28 @@ function sandboxWithMainLifecycle({
     removeEventListener: windowTarget.removeEventListener,
     dispatchEvent: windowTarget.dispatchEvent,
     __IOS_STORE__: false,
-    ...(useRealTimer ? {
-      Date: LifecycleDate,
-      setInterval: (callback) => {
-        const id = nextIntervalId++;
-        intervals.set(id, callback);
-        return id;
-      },
-      clearInterval: (id) => {
-        intervals.delete(id);
-      },
-      setTimeout: (callback) => {
-        const id = nextIntervalId++;
-        timeouts.set(id, callback);
-        return id;
-      },
-      clearTimeout: (id) => {
-        timeouts.delete(id);
-      }
-    } : {})
+    // 假 scheduler（Date / setInterval / setTimeout）一律安裝，不看任何旗標。
+    // 過去它綁在 useRealTimer 上，漏帶旗標的 sandbox 會拿到真的 setTimeout，於是
+    // clock.runTimeouts() 靜默變成 no-op，`aiCalls: 0` 這類斷言空洞通過卻全綠。
+    // 恆常安裝直接消除這個失效模式（空佇列的 no-op 才是唯一剩下的合法情境），
+    // 順帶讓 main.js 排的計時器不再洩漏到 jest worker 的 event loop。
+    Date: LifecycleDate,
+    setInterval: (callback) => {
+      const id = nextIntervalId++;
+      intervals.set(id, callback);
+      return id;
+    },
+    clearInterval: (id) => {
+      intervals.delete(id);
+    },
+    setTimeout: (callback) => {
+      const id = nextIntervalId++;
+      timeouts.set(id, callback);
+      return id;
+    },
+    clearTimeout: (id) => {
+      timeouts.delete(id);
+    }
   }, moduleMocks);
   loadIntoContext(ctx, localRequire, './main.js');
   const gameState = localRequire('./game-state.js');
