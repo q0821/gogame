@@ -144,7 +144,13 @@ const app = {
   placeStone: (...args) => placeStone(...args),
   doPass: (...args) => doPass(...args),
   setAIThinking: (value) => GameState.setAIThinking(value),
-  toggleDeadGroup: (stones) => GameState.toggleDeadGroup(stones),
+  // 死子標記是數目期間唯一會改動狀態的使用者操作（進入點只有棋盤點擊，見
+  // event-handlers.js）。成功切換後存檔，reload 才保得住手動修正的死子。
+  toggleDeadGroup: (stones) => {
+    const result = GameState.toggleDeadGroup(stones);
+    if (result.ok) saveGame();
+    return result;
+  },
   updateUI: () => updateUI(),
   updateScoringDisplay: () => updateScoringDisplay(),
   syncStatus: (...args) => syncStatus(...args),
@@ -779,6 +785,9 @@ async function endGameByScoring() {
   stopTimer();
   saveGame();
   GameState.beginScoring();
+  // 進入數目的狀態（isScoring + 估算出的 deadStones）立刻寫進 snapshot，reload 才回得到
+  // 數目畫面。上面那次 saveGame() 是在 beginScoring() 之前，存進去的 isScoring 還是 false。
+  saveGame();
   const scoringState = getGoState();
   document.getElementById('scoringPanel').style.display = 'block';
   // 進入數目那一刻就把最新狀態推給資訊列。雙虛手路徑的 applyPass() 已換手並多記一手，
@@ -806,6 +815,9 @@ async function endGameByScoring() {
       const dead = deadStonesFromOwnership(ownership);
       GameState.setDeadStones(dead);
       _lastOwnership = ownership;
+      // KataGo ownership 推導出的死子比 beginScoring() 的純 JS 估算準，覆蓋後要再存一次，
+      // 否則 reload 拿到的是精算前的估算值。
+      saveGame();
     }
   } catch (err) {
     const latest = getGoState();
@@ -1415,9 +1427,17 @@ function startNewGame() {
 // ==================== SAVE / RESTORE ====================
 const SAVE_KEY = 'gogame_state';
 
+// 數目狀態（isScoring／deadStones）要能持久化，所以守門只擋覆盤。
+// 選擇「放寬守門」而不是「只在 beginScoring() 之後補存一次」的理由：saveGame() 的呼叫端
+// 很分散（死子標記、pagehide／visibilitychange checkpoint、離開對弈畫面、被擋下的
+// doPassAndSave 尾巴），只補一處等於留下一堆「數目期間的變動存不進去」的縫。放寬後數目
+// 期間的每次操作都會存檔，含死子切換——這正是我們要的保真度（reload 保留手動修正的死子）。
+//
+// 覆盤仍然不存：loadGame() 沒有重建覆盤 UI 的路徑，還原成 isReviewing=true 會變成
+// 「盤面停在覆盤游標、卻沒有任何覆盤控制項」的死狀態。
 function saveGame() {
   const state = getGoState();
-  if (state.isReviewing || state.isScoring) return;
+  if (state.isReviewing) return;
   if (state.timerEnabled) GoTimer.sync();
   const snapshot = GameState.getSnapshot();
   try {
@@ -1467,19 +1487,35 @@ function loadGame() {
     document.getElementById('timerSettings').style.display = state.timerEnabled ? 'block' : 'none';
     document.getElementById('timerArea').style.display = state.timerEnabled ? 'block' : 'none';
     if (state.timerEnabled) updateTimerDisplay();
-    if (state.timerEnabled && !state.gameOver) startTimer();
+    // 數目期間不走鐘（endGameByScoring() 進入數目時已停鐘），還原也不該重新起鐘。
+    if (state.timerEnabled && !state.gameOver && !state.isScoring) startTimer();
     if (state.gameOver && document.getElementById('reviewToggle').checked) {
       document.getElementById('reviewBtn').style.display = 'block';
     }
 
     updateUI();
     drawBoard();
-    syncStatus(state.gameOver ? '遊戲結束 — 可覆盤或開始新局' : `已恢復棋局（第 ${state.moveHistory.length} 手）`);
+    if (state.isScoring) {
+      // 重建數目畫面。分數用本地 calculateScore() 依還原的 deadStones 重算即可，不重跑
+      // KataGo ownership——那是「進入數目那一刻」的精算，結果已經在 deadStones 裡，
+      // 還原時再跑一次只是多花一次引擎推論、拿到同樣的東西。
+      // 刻意不重開結果彈窗（showScoringResultModal）：每次 reload 都彈一次太擾人，
+      // 使用者要看結果可按 scoringPanel 的「查看結果」。
+      document.getElementById('scoringPanel').style.display = 'block';
+      updateScoringDisplay();
+      applyUnfinishedWarning();   // 內含 setStatus，故不再呼叫 syncStatus
+    } else {
+      syncStatus(state.gameOver ? '遊戲結束 — 可覆盤或開始新局' : `已恢復棋局（第 ${state.moveHistory.length} 手）`);
+    }
 
     // 不預載引擎；若恢復後輪到 AI，直接求手（KataGo 優先、lazy）。
+    // 數目中不求手：requestAIMove() 只擋 gameOver／isAIThinking、不看 isScoring，放行等於
+    // 白跑一次引擎推論，還會把「AI 思考中」蓋在數目畫面上（那一手最後仍被 placeStone() 的
+    // isGameBlocked() 擋掉，純屬白工）。
     if (
       state.gameMode === 'pvc'
       && !state.gameOver
+      && !state.isScoring
       && state.currentPlayer !== state.playerColor
     ) {
       scheduleAIMove(AI_INIT_DELAY_MS);

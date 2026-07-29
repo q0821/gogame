@@ -285,7 +285,7 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
-  test('進入數目前先保存最新計時，pagehide 與 hidden 期間重新載入仍是可繼續的非數目狀態', () => {
+  test('進入數目前先保存最新計時，pagehide 與 hidden 期間重新載入停在數目狀態且秒數不再流逝', () => {
     const sharedStorage = createMockLocalStorage();
     const firstPage = sandboxWithMainLifecycle({ sharedStorage, useRealTimer: true });
     startTimedGame(firstPage);
@@ -308,7 +308,9 @@ describe('圍棋主流程狀態生命週期', () => {
       currentPlayer: 2,
       passCount: 1,
       gameOver: false,
-      isScoring: false,
+      // 數目狀態現在會持久化並還原（見「數目狀態持久化」一節）。此測試的核心是計時：
+      // 進入數目時已停鐘定格，pagehide／hidden 期間的 checkpoint 不得再改動秒數。
+      isScoring: true,
       timerSeconds: { 1: 300, 2: 245 }
     });
   });
@@ -367,17 +369,20 @@ describe('圍棋主流程狀態生命週期', () => {
     expect(restored).toMatchObject({
       currentPlayer: 1, // 黑：白剛虛手完，下一手輪到黑
       passCount: 0,
-      isScoring: false,
+      isScoring: true,  // 數目狀態會持久化並還原（見「數目狀態持久化」一節）
       gameOver: false
     });
-    // 上面 4 個欄位與「全新一局」同值，單靠它們無法分辨「還原了雙虛手 snapshot」
-    // 與「根本沒載入、開了新局」；用棋譜長度／內容釘住確實載入的是雙虛手那一局。
+    // 上面 currentPlayer／passCount／gameOver 與「全新一局」同值，單靠它們無法分辨
+    // 「還原了雙虛手 snapshot」與「根本沒載入、開了新局」；用棋譜長度／內容釘住
+    // 確實載入的是雙虛手那一局。
     expect(restored.moveHistory.map((m) => ({ player: m.player, pass: !!m.pass }))).toEqual([
       { player: 1, pass: true },
       { player: 2, pass: true }
     ]);
 
-    // 再虛手一次不應該立即被判定為雙虛手終局（passCount 不應殘留在 2）。
+    // 取消數目回到對局後，再虛手一次不應該立即被判定為雙虛手終局
+    //（passCount 不應殘留在 2）。
+    secondPage.ctx.cancelScoring();
     secondPage.ctx.doPass();
     expect(secondPage.GameState.getState()).toMatchObject({
       isScoring: false,
@@ -396,6 +401,9 @@ describe('圍棋主流程狀態生命週期', () => {
 
     const secondPage = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
     secondPage.ctx.document.getElementById('undoToggle').checked = true;
+    // 還原後停在數目狀態（見「數目狀態持久化」一節），doUndo() 走 isGameBusy() 會被
+    // isScoring 擋住，先取消數目回到對局。
+    secondPage.ctx.cancelScoring();
 
     secondPage.ctx.doUndo(); // 悔掉白的虛手
 
@@ -891,6 +899,115 @@ describe('圍棋主流程狀態生命週期', () => {
       // 且旗標不能被舊局的排程卡住，否則新局從第一手就點不動。
       sandbox.ctx.doPass();
       expect(sandbox.GameState.getState().moveHistory).toHaveLength(1);
+    });
+  });
+
+  // ——— 數目狀態的持久化與還原 ———
+  // getSnapshot()／restoreSnapshot() 早就有 isScoring 與 deadStones 兩個欄位（格式不動、
+  // 不需 migration）；卡住的是 saveGame() 遇到 isScoring 就早退，所以 isScoring: true
+  // 從來寫不出去，數目期間 reload 會退回對局狀態。
+  describe('數目狀態持久化', () => {
+    /** 開一局 pvp、下一手、申請數目，回傳停在數目畫面的 sandbox。 */
+    function gameInScoring(sharedStorage) {
+      const sandbox = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+      sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+      sandbox.ctx.startNewGame();
+      sandbox.GameState.applyMove(4, 4);
+      sandbox.ctx.finishGame();
+      return sandbox;
+    }
+
+    test('進入數目後重新載入，回到數目畫面而不是對局', () => {
+      const sharedStorage = createMockLocalStorage();
+      const first = gameInScoring(sharedStorage);
+      expect(first.GameState.getState().isScoring).toBe(true);
+
+      const saved = readSavedGame(sharedStorage);
+      expect(saved.isScoring).toBe(true);
+
+      const second = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+      const restored = second.GameState.getState();
+      expect({
+        isScoring: restored.isScoring,
+        deadStones: Array.from(restored.deadStones),
+        moves: restored.moveHistory.length
+      }).toEqual({
+        isScoring: true,
+        deadStones: Array.from(first.GameState.getState().deadStones),
+        moves: 1
+      });
+      // 數目面板必須重新顯示，否則畫面停在對局樣子、狀態卻是數目中，點棋盤會變成標死子。
+      // 用 getElementById 取（而非 elements 快取）：元素是 lazy 建立的，沒被碰過時
+      // elements 上根本沒有這個 key，斷言會爆 TypeError 而不是給出可讀的期望值差異。
+      const panel = second.ctx.document.getElementById('scoringPanel');
+      expect(panel.style.display).toBe('block');
+      // 分數用本地 calculateScore() 重算即可，不需重跑 KataGo ownership。
+      expect(second.ctx.document.getElementById('blackScore').textContent).toBe(
+        first.ctx.document.getElementById('blackScore').textContent
+      );
+    });
+
+    test('數目期間標記死子會即時寫進 snapshot', () => {
+      const sharedStorage = createMockLocalStorage();
+      const sandbox = gameInScoring(sharedStorage);
+      const app = sandbox.app;
+      const before = readSavedGame(sharedStorage).deadStones;
+
+      const group = app.getGroup(app.board, 4, 4);
+      app.toggleDeadGroup(group.stones);
+
+      const after = readSavedGame(sharedStorage).deadStones;
+      expect(after).not.toEqual(before);
+      expect(after).toEqual(Array.from(sandbox.GameState.getState().deadStones));
+    });
+
+    test('還原數目狀態時不排 AI 求手也不起鐘', () => {
+      const sharedStorage = createMockLocalStorage();
+      sharedStorage.setItem(SAVE_KEY, JSON.stringify({
+        ...savedGame({
+          gameMode: 'pvc',
+          playerColor: 1,
+          currentPlayer: 2,           // 輪 AI
+          timerEnabled: true,
+          timerSeconds: { 1: 280, 2: 300 }
+        }),
+        isScoring: true,
+        deadStones: []
+      }));
+
+      const sandbox = sandboxWithMainLifecycle({
+        sharedStorage, hash: '#play', useRealTimer: true
+      });
+
+      // 數目畫面不該讓 AI 求手：requestAIMove() 只擋 gameOver／isAIThinking，不看
+      // isScoring，放行等於白白跑一次引擎推論、還讓「AI 思考中」蓋在數目畫面上。
+      sandbox.clock.runTimeouts();
+      expect(sandbox.requestAIMove).toHaveBeenCalledTimes(0);
+
+      // 數目期間不走鐘（進入數目時已停鐘），還原也不該重新起鐘。
+      sandbox.clock.advance(30_000);
+      sandbox.clock.tick();
+      expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 280, 2: 300 });
+    });
+
+    test('舊版 snapshot（沒有 isScoring 欄位）照原本路徑還原', () => {
+      const sharedStorage = createMockLocalStorage();
+      const legacy = savedGame({ gameMode: 'pvc', playerColor: 1, currentPlayer: 2 });
+      delete legacy.isScoring;
+      delete legacy.deadStones;
+      sharedStorage.setItem(SAVE_KEY, JSON.stringify(legacy));
+
+      const sandbox = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+      const state = sandbox.GameState.getState();
+
+      expect({
+        isScoring: state.isScoring,
+        deadStones: Array.from(state.deadStones),
+        moves: state.moveHistory.length
+      }).toEqual({ isScoring: false, deadStones: [], moves: 1 });
+      // 輪到 AI 就照常求手（原本的行為不受影響）。
+      sandbox.clock.runTimeouts();
+      expect(sandbox.requestAIMove).toHaveBeenCalledTimes(1);
     });
   });
 
