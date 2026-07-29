@@ -1,3 +1,8 @@
+※ 本檔是 2026-03 的歷史除錯流水帳，記錄當時 index.html 內嵌腳本時期的排查過程，僅供追溯，不代表現況。
+※ 文中提及的 turnDisplay（桌機回合顯示元素）、gnugo-service.js（舊 AI 引擎）、gogame_save（舊存檔 key）
+※ 以及 showGuidanceTooltipAt 等，均已在後續重構中移除，現行程式碼不存在；grep 到這些名稱請以本行為準，勿據以修改。
+※ 現行的回合徽章是 #mobileTurn（唯一寫入點 ui.js updateHUD），存檔 key 是 gogame_state。
+
 [2026-03-14 16:15 GMT+8]
 回歸測試發現：重新載入 http://127.0.0.1:8008/ 後，頁面上的 GoUI 物件存在，但 GoUI.syncStatus 與 GoUI.getStatusMessage 皆為 undefined。
 同時 statusMsg / mobileStatus 曾出現或殘留「🤔 GnuGo 思考中...」。

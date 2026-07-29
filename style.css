@@ -335,32 +335,6 @@ button.danger:active:not(:disabled) { transform: scale(0.97); box-shadow: none; 
 .black-indicator { color: var(--text); }
 .white-indicator { color: var(--text-dim); }
 
-.current-turn {
-  text-align: center;
-  padding: 11px 14px;
-  margin: 10px 0;
-  border-radius: var(--radius);
-  font-size: 14px;
-  font-weight: 700;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  letter-spacing: 0.5px;
-  transition: all 0.3s ease;
-}
-.current-turn.black {
-  background: linear-gradient(135deg, #252525 0%, #181818 100%);
-  color: #eee;
-  border-color: #3a3a3a;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
-}
-.current-turn.white {
-  background: linear-gradient(135deg, #ede5d5 0%, #d8cfbe 100%);
-  color: #2a2218;
-  border-color: #c8c0b0;
-  box-shadow: 0 2px 12px rgba(210,190,150,0.2);
-}
-
 /* ===== 棋子色點（取代 ⚫/⚪ emoji）=====
    漸層仿 ui.js drawStone（左上高光 #5a5a5a→#111 黑 / #fff→#ccc 白 + 右下陰影），
    跨平台渲染一致、隨字級用 em 縮放、與棋盤棋子風格統一。 */
@@ -379,7 +353,6 @@ button.danger:active:not(:disabled) { transform: scale(0.97); box-shadow: none; 
 }
 /* 輪次徽章：棋子用 ::before，由 JS 切換的 .black/.white class 決定顏色。
    黑棋子在深色徽章底上加細白環，避免糊在一起。 */
-.current-turn.black::before, .current-turn.white::before,
 .turn-badge.black::before, .turn-badge.white::before {
   content: '';
   display: inline-block;
@@ -390,11 +363,11 @@ button.danger:active:not(:disabled) { transform: scale(0.97); box-shadow: none; 
   margin-right: 0.45em;
   box-shadow: 0 1px 2px rgba(0,0,0,0.35);
 }
-.current-turn.black::before, .turn-badge.black::before {
+.turn-badge.black::before {
   background: radial-gradient(circle at 35% 32%, #5a5a5a 0%, #111 75%);
   box-shadow: 0 1px 2px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.14);
 }
-.current-turn.white::before, .turn-badge.white::before {
+.turn-badge.white::before {
   background: radial-gradient(circle at 35% 32%, #fff 0%, #ccc 78%);
   box-shadow: 0 1px 2px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(0,0,0,0.12);
 }

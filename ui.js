@@ -167,11 +167,6 @@ export function updateHUD(state) {
     isAIThinking: !!state.isAIThinking && state.currentPlayer !== BLACK
   };
 
-  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  setText('blackCaptures', normalizedState.captures[BLACK]);
-  setText('whiteCaptures', normalizedState.captures[WHITE]);
-  setText('moveCount', normalizedState.moveHistory.length);
-
   const mt = document.getElementById('mobileTurn');
   if (normalizedState.gameOver) {
     mt.textContent = '遊戲結束';
