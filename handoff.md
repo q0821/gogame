@@ -264,13 +264,13 @@ Reviewer 查證過其他管道都不可達：web 與 iOS 不共用 localStorage�
 
 ## Follow-up 清單
 
-### 第一級，下次發布前必須揭露的行為差異
+### 第一級，原本要在發布前揭露的行為差異：三項皆已修掉
 
-註記：這次是 fast-forward merge，沒有 merge commit。使用者可見的行為變更已寫進 `CHANGELOG-ios.md` 的「未發布」段落，下次發版時填入版號即可。以下三項則是給開發者的技術面差異，不適合寫進面向使用者的 changelog。
+註記：使用者可見的行為變更都已寫進 `CHANGELOG-ios.md` 的「未發布」段落，下次發版時填入版號即可。
 
-1. 離開 `#play` 切換其他棋種後圍棋計時仍在跑（既有行為），但 `pagehide`／`visibilitychange` checkpoint 現在會把「在別的棋種畫面燒掉的時間」也寫進 snapshot，base 不會。修正方向見 **C1**。
-2. reload 落在雙虛手 snapshot 且 PvC 手番屬 AI 時，`loadGame()` 會直接讓 AI 走一手。根因是 `isScoring` 從不持久化。base 則是要求使用者重新虛手兩次，差別在手番歸誰，且 AI 那一手可悔棋。修正方向見 **C2**。
-3. `doUndo()` 與 `cancelScoring()` 新增兩個 100 ms AI 排程窗口，使同形實例從 base 的 5 個變成 7 個。後果不是卡死，而是窗口內按虛手會把該手記成 AI 顏色，污染棋譜與 SGF。修正方向見 **C3**。
+1. ~~離開 `#play` 後圍棋計時仍在跑，且 checkpoint 會把在別的棋種畫面燒掉的時間寫進 snapshot~~ 已由 **C1** 修掉（`de8a071` + `29dcba7`）。
+2. ~~reload 落在雙虛手 snapshot 且 PvC 手番屬 AI 時 `loadGame()` 會直接讓 AI 走一手~~ 已由 **C2** 修掉（`fdc6309`）。現在 reload 回到數目畫面，不會有這條路徑。
+3. ~~`doUndo()` 與 `cancelScoring()` 新增的 100 ms AI 排程窗口~~ 已由 **C3** 修掉（`5eb6d85`）。`aiMoveScheduled` 旗標納入 `isGameBusy()` 後，8 個排程點的窗口全關。
 
 ### 第二級，已於 follow-up 清理批次完成
 
@@ -282,19 +282,30 @@ Reviewer 查證過其他管道都不可達：web 與 iOS 不共用 localStorage�
 6. ~~`useRealTimer` 旗標的雙重職責~~ 已於 `eaf0e0d` 處理。**沒有**照原本設想拆成兩個旗標（拆完漏帶新旗標的後果一模一樣），改為假 scheduler 恆常安裝，旗標語意收窄為「只決定要不要載入真實 `timer.js`」。刻意不改名：14 個呼叫點用解構預設值 `= false`，改名會讓舊名被靜默忽略，正是要根治的失效類型。附帶修好 jest 平行執行的 worker 計時器洩漏警告。更正一項當初的宣稱：那種空洞斷言在本 repo 從未實際存在（base 與 HEAD 稽核皆為 0 條），改動的實證效益是消除 worker 洩漏與防止未來發生。
 7. ~~`ui.js` 渲染層零自動化覆蓋~~ 已於 `e3a9de2` 完成。spike 推翻了原本的假設：這個專案的測試是 `testEnvironment: 'node'` + `vm.createContext()` 自建 realm，**從頭到尾沒有 jsdom**，所以擋路的不是 canvas 而是 helpers 把 `ui.js` 整組 mock 掉的決定。採路線 C：`localRequire('./ui.js')` 載入真實模組，就地覆寫 `drawBoard`／`drawWinrateGraph`（那兩條繼續交給瀏覽器 smoke），零新增依賴、既有測試零修改。12 個 export 中 10 個現在是真的。
 8. ~~「計時局 → 計時局」路徑無測試~~ 已於 `501d768` 補上。注意它與既有的「計時 → 不計時」測試互補、不可合併：這條路徑對 `stopTimer()` 排序 bug 免疫（被 `GoTimer.init` 的整份覆寫遮蔽），真正守住那個 bug 的是「計時 → 不計時」那條。
-9. 虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門。**見上方 C3**，待討論。
-10. `returnToOriginal()` 未 `saveGame()`，返回原譜後 reload 會回到練習分支。**見上方 C4**，待討論。
-11. `updateHUD()` 的 `isAIThinking && currentPlayer !== BLACK` normalization 使人類執白時「AI 思考中」徽章永不顯示。**見上方 C7**，待討論。
+9. ~~虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門~~ 已由 **C3** 修掉（`5eb6d85`）。
+10. ~~`returnToOriginal()` 未 `saveGame()`~~ 已由 **C4** 修掉（`55380ca`）。只補 `saveGame()` 是靜默 no-op，一併加了 `GameState.exitReview()` 才生效。
+11. ~~`updateHUD()` 的 `isAIThinking` normalization~~ 已由 **C7** 修掉（`3004d9e`）。
 12. ~~`doUndo()` 排程觸發條件的註解敘述錯誤~~ 已於 `a1196b2` 修正。真正的觸發條件是「盤上只有 AI 開局那一手時悔棋」與「從已卡在 AI 手番的狀態恢復」，不是原本寫的「悔兩手後回到輪 AI」（悔兩手其實保留手番）。
-13. `cancelScoring()` 的 AI 排程不具冪等性，連呼叫兩次會排兩次。**見上方 C6**，待討論。
+13. ~~`cancelScoring()` 的 AI 排程不具冪等性~~ 已由 **C6** 修掉（`5eb6d85`，與 C3 同一機制）。
 14. ~~`ui.js` 的三行 `setText` 死碼~~ 已於 `ee6db06` 刪除，連帶移除只被那三行使用的 `setText` 輔助函式。
 15. ~~`style.css` 的 `.current-turn` 孤兒規則~~ 已於 `ee6db06` 刪除。其中 3 條 `::before` 是與仍在使用的 `.turn-badge` 共用的選擇器串，只拆掉 `.current-turn` 那半；reviewer 用腳本逐字元比對確認 7 個 `.turn-badge` 規則的選擇器與宣告區塊在前後兩版完全相同。
 16. ~~`GameState.setAiLevel()` 不夾值~~ 已於 `3628b7d` 補上，範圍從 `adaptive-difficulty.js` 讀 `MIN_LEVEL`／`MAX_LEVEL`，非寫死數字。
-17. `_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。**見上方 C5**，待討論。
+17. ~~`_timerOnTimeout()` 與 AI 落子的守門順序~~ 已由 **C5** 處理（`1f89549`）。實情與原本描述不同：超時路徑原本就攔得住，真正會出事的是「AI 求手期間按開新局」。
 18. ~~`regression_notes_status_sync.txt` 提到已刪除的 `turnDisplay`~~ 已於 `ee6db06` 處理。決定保留檔案不刪、也不改寫有時間戳的內文（改寫等於偽造記錄），只在檔首加 4 行過期說明，讓日後 grep 命中時第一行就自我解釋。Reviewer 逐句驗證過那 4 行說明皆正確。
 19. `aiLevel` 仍有兩條繞過 `setAiLevel()` 的直寫路徑：`game-state.js` 的 `createInitialState()` 與 `restoreSnapshot()` 都是 `snapshot.aiLevel || 10`，未夾值。損毀的 localStorage 仍可塞進超範圍值。不阻擋（`levelConfig()` 與 `nextLevelForMode()` 內部各自夾過範圍，AI 實際強度不受影響）。
 20. `#statusMsg` 這個元素在任何 HTML 都不存在，`setStatus()` 對它的寫入永遠走 null guard。未來可考慮連同 guard 一起清掉。
 21. 測試 DOM mock 的效力界線：`getElementById` 永不回傳 null、`textContent` 不做字串轉型。所以「元素被刪掉」這類 regression 測不到，該防線仍在瀏覽器 smoke；`moves: 7` 這類斷言是 mock 形狀，換到真實 DOM 需要 `String()`。
+
+### 組 C review 與 smoke 新找到的（全部不阻擋，未處理）
+
+22. `returnToOriginal()` 是唯一沒有 `cancelScheduledAIMove()` 的換局路徑（其他三處 `restoreSnapshot`／`startGame` 呼叫端都有）。Reviewer 實測殘留排程確實會觸發一次 `requestAIMove()`，但還原後 `gameOver` 為 true 使其早退，目前無害。建議補上以保住「換局一律 cancel」的不變式，免得日後覆盤放寬到中局時破功。
+23. `ai-controller.js` 整輪失敗後的 1.5 秒恢復重試排程，若碰上已有 pending 排程會被冪等守門靜默丟棄，AI 會停在「自動重試中…」不再重試。可達條件是「AI 思考中按開始新遊戲」，而那種情況下舊局的重試本來就不該發生。
+24. modal 是 `position:fixed`，`showScreen()` 不會關掉它。若使用者開著結果 modal 用瀏覽器上一頁離開 `#play`，再按 modal 裡的「再來一局」，新局的 `startTimer()` 會被 `playTimerSuspended` 吞掉。切回 `#play` 時 `enterPlayMode()` 的續鐘分支會自癒。
+25. `deadStones` 必須是 `Set` 這個不變式沒有測試釘住（`toggleDeadGroup()` 用 `.has/.add/.delete`，而測試用 `Array.from()` 斷言，對 Array 與 Set 行為相同）。現況正確（`createInitialState()` 有 `new Set()`），但日後有人動 `restoreSnapshot` 測試不會叫。
+26. 「reload 進數目 → 再標死子」這條 C2 新開的整合路徑沒有自動化測試（瀏覽器 smoke 第 4 項有實測通過）。
+27. `index.html` 數目面板附近的註解寫「該處也可確認/取消」，但 panel 內實際只有「查看結果」一顆鈕。既有錯誤，但 C2 讓這個 panel 成為 reload 後的唯一入口，值得順帶修正。使用者的逃生路徑是：查看結果 → modal 的「繼續對弈／修正死子／確認結果」。
+28. `returnToOriginal()` 之後 `currentReviewMove` 仍停在離開時的手數（`isReviewing` 已為 false 故不影響顯示）。
+29. `loadGame()` 還原終局狀態時未重建 `#exportSgfBtn`。
 
 ## 全域限制
 
