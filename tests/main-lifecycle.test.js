@@ -118,6 +118,52 @@ describe('圍棋主流程狀態生命週期', () => {
     expect(elements.aiManualLevel.value).toBe('4');
   });
 
+  // 持久化的 gogame_ai_level 只夾下界，被寫壞成超出上限的值時會原封不動流進 GameState，
+  // 再從那裡散到等級顯示、手動選單與新局／恢復對局寫入的控制項值。實際瀏覽器裡
+  // <select>.value 收到不存在的選項會靜默變成空字串，等級顯示則會出現「第 999 級」。
+  test('持久化 AI 等級超出上限時，GameState 與控制項都夾在合法範圍', () => {
+    const { GameState, elements } = sandboxWithMainLifecycle({
+      storage: { [AI_LEVEL_KEY]: '999' }
+    });
+
+    expect({
+      stateAiLevel: GameState.getState().aiLevel,
+      display: elements.aiLevelDisplay.textContent,
+      manualValue: elements.aiManualLevel.value
+    }).toEqual({
+      stateAiLevel: 13,
+      display: '第 13 級（約 1 級）',
+      manualValue: '13'
+    });
+  });
+
+  test('持久化 AI 等級超出上限時，開新局與恢復對局寫進手動選單的值仍在合法範圍', () => {
+    const fresh = sandboxWithMainLifecycle({
+      storage: { [AI_LEVEL_KEY]: '999' }
+    });
+    fresh.ctx.startNewGame(); // 自動模式：新局等級取自 loadAiLevel()
+
+    const restored = sandboxWithMainLifecycle({
+      hash: '#play',
+      storage: {
+        [AI_LEVEL_KEY]: '999',
+        [SAVE_KEY]: JSON.stringify(savedGame({ aiLevel: 9 }))
+      }
+    });
+
+    expect({
+      newGameManualValue: fresh.elements.aiManualLevel.value,
+      newGameStateAiLevel: fresh.GameState.getState().aiLevel,
+      loadedManualValue: restored.elements.aiManualLevel.value,
+      loadedStateAiLevel: restored.GameState.getState().aiLevel
+    }).toEqual({
+      newGameManualValue: '13',
+      newGameStateAiLevel: 13,
+      loadedManualValue: '13',
+      loadedStateAiLevel: 13
+    });
+  });
+
   test('計時對局在 pagehide 後重新載入，活動方剩餘時間不會倒退', () => {
     const sharedStorage = createMockLocalStorage();
     const firstPage = sandboxWithMainLifecycle({ sharedStorage, useRealTimer: true });

@@ -85,6 +85,17 @@ function getGoState() {
 
 `aiLevelMode` 是跨對局的使用者偏好，維持由 `localStorage` 管理。當前棋局實際使用的 `aiLevel` 則由 `GameState` 管理。
 
+#### `aiLevel` 有兩個持久化家，這是刻意設計
+
+`aiLevel` 同時出現在兩個 `localStorage` key，在一份標題是「單一狀態來源」的文件裡容易被誤讀成漏改，這裡明確記下：
+
+- `gogame_ai_level`（`AI_LEVEL_KEY`）是**權威來源**。它是跨對局偏好，由 `loadAiLevel()` 讀、`saveAiLevel()` 寫，與 `aiLevelMode` 同一類，不屬於單局狀態。
+- `gogame_state`（`SAVE_KEY`）裡的 `snapshot.aiLevel` **寫得出、讀不到**。`getSnapshot()` 仍輸出這個欄位（維持已上架版本的 snapshot 格式，不做 migration），但 `loadGame()` 在 `restoreSnapshot(s)` 之後會立刻用 `GameState.setAiLevel(loadAiLevel())` 覆蓋掉它。
+
+換句話說：`GameState.aiLevel` 作為「當前對局使用的等級」這個**執行期**狀態的單一來源沒有例外；但它的**持久化**歸 `gogame_ai_level` 管，`snapshot.aiLevel` 只是為了格式相容而保留的殘留欄位。恢復對局時等級跟著使用者偏好走，而不是跟著那一局存檔當下的值走，才符合「等級是跨對局偏好」的語意。
+
+連帶結論：`loadAiLevel()` 是 `GameState.aiLevel` 的主要來源（開機、開新局的自動模式、恢復對局都經過它），因此合法範圍的夾值放在 `loadAiLevel()`，而不是放在每一處把等級寫進控制項的地方。
+
 ## 讀取介面
 
 `main.js` 的 render、操作、儲存與路由流程直接讀取 `GameState.getState()`。

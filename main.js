@@ -570,9 +570,13 @@ function doUndo() {
   setStatus('已退回一手');
   saveGame();
 
-  // 悔棋會改變手番，但沒有任何人會替 AI 推進。PvC 且 AI 先手（人類執白、或讓子局白先）
-  // 時，悔兩手後會回到「輪 AI」的局面：棋盤點擊被 event-handlers.js 的手番守門擋住、
-  // AI 也沒被喚醒，對局就停住。比照 loadGame() 的做法，還原後輪到 AI 就排一次求手。
+  // 悔棋還原後可能輪到 AI，但沒有任何人會替 AI 推進：棋盤點擊被 event-handlers.js 的手番
+  // 守門擋住、AI 也沒被喚醒，對局就停住。比照 loadGame() 的做法，還原後輪到 AI 就排一次
+  // 求手。PvC 的 undo() 在 boardHistory.length >= 2 時一次悔兩手，而 applyMove() 與
+  // applyPass() 都換手，pop 兩次剛好抵銷，手番保持不變，所以真正會落到「輪 AI」的是：
+  //   (a) boardHistory.length === 1，只悔一手——盤上僅有 AI 的開局單手（人類執白、
+  //       或讓子局白先），還原後回到 AI 的開局手番；
+  //   (b) 悔棋前就已經卡在 AI 手番（例如 AI 求手中斷後恢復），悔兩手後仍是 AI 手番。
   const afterUndo = getGoState();
   if (
     afterUndo.gameMode === 'pvc'
@@ -608,10 +612,15 @@ function outcomeFor(winnerColor) {
 }
 
 // ——— 自適應難度（電腦等級依戰績升降） ———
+// 持久化的等級一律夾在合法範圍再回傳：這是 GameState.aiLevel 的主要來源（開機、開新局的
+// 自動模式、恢復對局都經過這裡），夾在源頭才能讓等級顯示、手動選單與新局狀態拿到同一個
+// 合法值。只夾下界的話，被寫壞成超出上限的值會流進 <select>.value（瀏覽器會靜默變成空
+// 字串）與「第 999 級」這種顯示。AI 強度不受影響：levelConfig() 與 nextLevelForMode()
+// 本來就各自夾過範圍。
 function loadAiLevel() {
   try {
     const v = parseInt(localStorage.getItem(AI_LEVEL_KEY));
-    if (Number.isFinite(v)) return Math.max(MIN_LEVEL, v);
+    if (Number.isFinite(v)) return Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, v));
   } catch (_) {}
   return MIN_LEVEL; // 預設從最低級開始往上爬
 }
