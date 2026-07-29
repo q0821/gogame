@@ -1072,12 +1072,21 @@ function initTimer() {
   GoTimer.init(minutes, timerOptions().setTimerSeconds);
 }
 
+// 目前是否停在對弈畫面之外。離開 #play 等於暫停對局，這段期間任何人都不准起鐘。
+// 只在 leavePlayMode() 停鐘是不夠的：PvC 的 AI 那一手可能在使用者離開之後才回來，
+// 走 placeStone()／doPass() 時的 switchTimer() 會把鐘重新打開，在別的棋種畫面上繼續
+// 燒圍棋的時間（甚至可能在隱藏的畫面上判超時）。startTimer() 與 switchTimer() 兩處
+// 都要擋：switchTimer() 直接呼叫 GoTimer.switch()，不經過 startTimer()。
+let playTimerSuspended = false;
+
 function startTimer() {
+  if (playTimerSuspended) return;
   if (!getGoState().timerEnabled) return;
   GoTimer.start(timerOptions());
 }
 
 function switchTimer() {
+  if (playTimerSuspended) return;
   if (!getGoState().timerEnabled) return;
   GoTimer.switch(timerOptions());
 }
@@ -1977,12 +1986,15 @@ function showScreen(name) {
 // 停鐘後補一次 saveGame() 把定格值寫進 snapshot；不補的話要等下一次圍棋操作才會寫，
 // 期間關掉分頁就丟失定格結果。
 function leavePlayMode() {
+  playTimerSuspended = true;   // 必須在早退之前設，見 playTimerSuspended 宣告處
   if (!getGoState().timerEnabled) return;
   stopTimer();
   saveGame();
 }
 
 function enterPlayMode() {
+  // 必須排在 loadGame()／startNewGame() 之前：它們自己會起鐘，旗標還立著就會被擋掉。
+  playTimerSuspended = false;
   loadSfxPack('go');
   loadSfxPack('common');
   if (!playInited) {

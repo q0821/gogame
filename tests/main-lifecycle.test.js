@@ -1048,6 +1048,52 @@ describe('圍棋主流程狀態生命週期', () => {
       expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 270, 2: 300 });
     });
 
+    test('離開後 AI 那一手才回來，也不會把鐘重新啟動', () => {
+      // PvC 是預設模式：人類落子後 AI 求手要 1–3 秒，這段期間使用者切到別的棋種很正常。
+      // AI 那一手回來時走的是 placeStone()／doPass()，兩者都會 switchTimer() →
+      // GoTimer.start() → 重新 setInterval，等於在別的棋種畫面上把圍棋的鐘又打開。
+      // 光在 leavePlayMode() 停鐘擋不住這條，因為停鐘發生在 AI 落子之前。
+      const sandbox = sandboxWithMainLifecycle({ hash: '#play', useRealTimer: true });
+      sandbox.ctx.document.getElementById('timerToggle').checked = true;
+      sandbox.ctx.document.getElementById('timerMinutes').value = '5';
+      sandbox.ctx.document.getElementById('gameMode').value = 'pvc';
+      sandbox.ctx.document.getElementById('playerColor').value = '1';
+      sandbox.ctx.startNewGame();
+
+      sandbox.clock.advance(20_000);
+      sandbox.app.placeStone(3, 3);   // 人類（黑）落子 → 換手給 AI（白），排一次求手
+      expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 280, 2: 300 });
+
+      navigate(sandbox, '#gomoku');   // AI 還在思考時切去五子棋
+      const frozen = { ...sandbox.GameState.getState().timerSeconds };
+
+      sandbox.clock.advance(10_000);
+      sandbox.app.placeStone(4, 4);   // AI 那一手在離開之後才回來
+      sandbox.clock.advance(30_000);
+      sandbox.clock.tick();
+
+      expect(sandbox.GameState.getState().timerSeconds).toEqual(frozen);
+      expect(readSavedGame(sandbox.localStorage).timerSeconds).toEqual(frozen);
+    });
+
+    test('離開對弈畫面後，取消數目也不會把鐘重新啟動', () => {
+      // cancelScoring() 走的是 startTimer()（不是 switchTimer()），所以兩個入口都要擋。
+      const sandbox = sandboxWithMainLifecycle({ hash: '#play', useRealTimer: true });
+      startTimedGame(sandbox, { minutes: 5 });
+      sandbox.clock.advance(20_000);
+      sandbox.GameState.applyMove(4, 4);
+      sandbox.ctx.finishGame();       // 進入數目，endGameByScoring() 會停鐘
+
+      navigate(sandbox, '#gomoku');
+      const frozen = { ...sandbox.GameState.getState().timerSeconds };
+
+      sandbox.ctx.cancelScoring();
+      sandbox.clock.advance(30_000);
+      sandbox.clock.tick();
+
+      expect(sandbox.GameState.getState().timerSeconds).toEqual(frozen);
+    });
+
     test('終局後離開再切回來不會重新起鐘', () => {
       const sandbox = sandboxWithMainLifecycle({ hash: '#play', useRealTimer: true });
       startTimedGame(sandbox, { minutes: 5 });
