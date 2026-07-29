@@ -739,6 +739,47 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
+  test('計時對局後再開一局不同時長的計時新局，雙方時鐘全部重置且只有當手方倒數', () => {
+    const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
+    startTimedGame(sandbox, { minutes: 5 });
+    sandbox.clock.advance(60_000);
+    sandbox.clock.tick();
+    expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 240, 2: 300 });
+
+    // 直接接一局 3 分鐘的計時新局（計時 → 計時，兩局時長不同）。
+    startTimedGame(sandbox, { minutes: 3 });
+
+    const started = sandbox.GameState.getState();
+    expect({
+      seconds: started.timerSeconds,
+      enabled: started.timerEnabled,
+      saved: readSavedGame(sandbox.localStorage).timerSeconds,
+      // GoTimer.updateDisplay() 是 #blackTimer/#whiteTimer 的唯一寫入點；
+      // 狀態重置但畫面停在舊局殘值同樣是使用者看得到的 bug，所以連 DOM 一起釘。
+      blackDisplay: sandbox.elements.blackTimer.textContent,
+      whiteDisplay: sandbox.elements.whiteTimer.textContent
+    }).toEqual({
+      seconds: { 1: 180, 2: 180 },
+      enabled: true,
+      saved: { 1: 180, 2: 180 },
+      blackDisplay: '03:00',
+      whiteDisplay: '03:00'
+    });
+
+    // 只有當手方（黑）在走鐘，白方維持定格。
+    sandbox.clock.advance(1_000);
+    sandbox.clock.tick();
+    expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 179, 2: 180 });
+    expect(sandbox.elements.blackTimer.textContent).toBe('02:59');
+
+    // 上一局的 interval 若沒被 GoTimer.stop() 清掉，這裡會多跑一輪 tick。
+    // wall-clock 計時本身是冪等的（剩餘由時間戳回推，不是每 tick 減一），
+    // 所以不推進時間再 tick 一次，秒數必須完全不動——會動就代表有人在重複扣秒。
+    sandbox.clock.tick();
+    sandbox.clock.tick();
+    expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 179, 2: 180 });
+  });
+
   test('PvC 悔棋後輪到 AI 就排求手、輪到人類就不排', () => {
     const actual = [1, 2].map((playerColor) => {
       const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
