@@ -494,6 +494,128 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
+  // ——— 終局入口的資訊列同步 ———
+  // 盤上狀態轉成 gameOver=true 的入口只有 endGame()（GameState.markGameOver() 的唯一呼叫點），
+  // 認輸、超時、確認數目三條路徑都收斂到它；loadGame() 與 doUndo() 也能還原出 gameOver=true，
+  // 但那兩條各自已呼叫 updateUI()。因此以下每個入口都斷言「UI 層最後收到的狀態＝GameState」。
+  // 註：ui.js 的 updateHUD() 在 gameOver 時把 #mobileTurn 寫成「遊戲結束」，不再顯示某一方的
+  // 回合，所以這裡連 gameOver 旗標一起斷言——徽章文字由該旗標決定。
+  test('認輸終局後，UI 層收到的狀態與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0); // 黑第 1 手 → 輪白
+
+    sandbox.ctx.doResign();
+
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiGameOver: lastHud.gameOver,
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateGameOver: state.gameOver,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiGameOver: true,
+      uiCurrentPlayer: 2,
+      uiMoveCount: 1,
+      stateGameOver: true,
+      stateCurrentPlayer: 2,
+      stateMoveCount: 1
+    });
+  });
+
+  test('雙虛手進入數目、確認結果終局後，UI 層收到的狀態與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0); // 黑第 1 手
+    sandbox.GameState.applyMove(1, 0); // 白第 2 手
+    sandbox.ctx.doPass();              // 黑虛手（第 3 手）
+    sandbox.ctx.doPass();              // 白虛手（第 4 手）→ 雙虛手進入數目
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    sandbox.ctx.confirmScoring();
+
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiGameOver: lastHud.gameOver,
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateGameOver: state.gameOver,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiGameOver: true,
+      uiCurrentPlayer: 1,
+      uiMoveCount: 4,
+      stateGameOver: true,
+      stateCurrentPlayer: 1,
+      stateMoveCount: 4
+    });
+  });
+
+  // 與上一條共用同一段 production 路徑（confirmScoring() → endGame()），差別只在進入數目的
+  // 方式：這條走「申請數目」按鈕，不換手也不加手數，因此期望值與雙虛手那條不同。
+  test('「申請數目」後確認結果終局，UI 層收到的狀態與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0); // 黑第 1 手
+    sandbox.GameState.applyMove(1, 0); // 白第 2 手
+    sandbox.ctx.finishGame();
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+    sandbox.ctx.confirmScoring();
+
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiGameOver: lastHud.gameOver,
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateGameOver: state.gameOver,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiGameOver: true,
+      uiCurrentPlayer: 1,
+      uiMoveCount: 2,
+      stateGameOver: true,
+      stateCurrentPlayer: 1,
+      stateMoveCount: 2
+    });
+  });
+
+  test('計時歸零終局後，UI 層收到的狀態與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
+    startTimedGame(sandbox, { minutes: 1 });
+    sandbox.clock.advance(60_000);
+
+    sandbox.clock.tick(); // 黑方時間歸零 → onTimeout → endGame()
+
+    const state = sandbox.GameState.getState();
+    const lastHud = sandbox.hudUpdates[sandbox.hudUpdates.length - 1];
+    expect({
+      uiGameOver: lastHud.gameOver,
+      uiCurrentPlayer: lastHud.currentPlayer,
+      uiMoveCount: lastHud.moveCount,
+      stateGameOver: state.gameOver,
+      stateCurrentPlayer: state.currentPlayer,
+      stateMoveCount: state.moveHistory.length
+    }).toEqual({
+      uiGameOver: true,
+      uiCurrentPlayer: 1,
+      uiMoveCount: 0,
+      stateGameOver: true,
+      stateCurrentPlayer: 1,
+      stateMoveCount: 0
+    });
+  });
+
   test('計時對局後開一局不計時新局，不會把上一局剩餘秒數帶進新局', () => {
     const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
     startTimedGame(sandbox, { minutes: 5 });

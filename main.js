@@ -972,6 +972,10 @@ function endGame(title, detail, outcome) {
   }
   document.getElementById('exportSgfBtn').style.display = 'block';
   setStatus(`遊戲結束 - ${title}`);
+  // 終局是 gameOver=true 的唯一入口（認輸、超時、確認數目都走這裡），不推的話資訊列會停在
+  // 上一次 updateUI() 的值：#mobileTurn 仍顯示某一方的回合而不是「遊戲結束」，手數也可能
+  // 落後（雙虛手路徑的第二個虛手、數目期間的變動都不經 updateUI()）。
+  updateUI();
   drawBoard();
   playSfx(`game-${outcome || 'win'}`);
 }
