@@ -1914,7 +1914,13 @@ function initHomeArrows() {
   }, true);
 }
 
+// 目前顯示中的畫面。showScreen() 是所有路由切換的唯一收斂點（只被 applyRoute() 呼叫），
+// 用它偵測「離開對弈畫面」比在 applyRoute 的每個分支各補一次可靠。
+let _activeScreen = null;
+
 function showScreen(name) {
+  if (_activeScreen === 'play' && name !== 'play') leavePlayMode();
+  _activeScreen = name;
   document.getElementById('homeScreen').style.display = name === 'home' ? 'flex' : 'none';
   document.getElementById('goScreen').style.display = name === 'play' ? 'flex' : 'none';
   document.getElementById('tsumegoScreen').style.display = name === 'tsumego' ? 'flex' : 'none';
@@ -1929,12 +1935,31 @@ function showScreen(name) {
   if (playHeader) playHeader.style.display = name === 'play' ? 'flex' : 'none';
 }
 
+// 離開對弈畫面＝暫停對局：停鐘定格精確剩餘秒數，並存檔。
+// 不停鐘的話，在別的棋種畫面待著也照樣扣圍棋的時間，而 pagehide／visibilitychange 的
+// checkpoint 還會把那段燒掉的時間寫進 snapshot（連 reload 都救不回來）。
+// 停鐘後補一次 saveGame() 把定格值寫進 snapshot；不補的話要等下一次圍棋操作才會寫，
+// 期間關掉分頁就丟失定格結果。
+function leavePlayMode() {
+  if (!getGoState().timerEnabled) return;
+  stopTimer();
+  saveGame();
+}
+
 function enterPlayMode() {
   loadSfxPack('go');
   loadSfxPack('common');
   if (!playInited) {
     playInited = true;
     if (!loadGame()) startNewGame();
+    return;   // loadGame()／startNewGame() 自己會起鐘
+  }
+  // 再次進入：離開時已由 leavePlayMode() 停鐘，對局若仍在進行就續鐘，否則對局等於被無故
+  // 中斷、只能靠下一手落子才恢復計時。終局／數目／覆盤本來就不該走鐘（進入那些狀態時
+  // 已各自停鐘），不在這裡重新起鐘。
+  const state = getGoState();
+  if (state.timerEnabled && !state.gameOver && !state.isScoring && !state.isReviewing) {
+    startTimer();
   }
 }
 

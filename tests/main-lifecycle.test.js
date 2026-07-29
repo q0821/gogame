@@ -894,6 +894,59 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
+  // ——— 離開／回到對弈畫面的計時生命週期 ———
+  describe('離開 #play 的計時處理', () => {
+    /** 切換 hash 路由：比照瀏覽器先改 location.hash 再發 hashchange。 */
+    function navigate(sandbox, hash) {
+      sandbox.ctx.location.hash = hash;
+      sandbox.ctx.dispatchEvent({ type: 'hashchange' });
+    }
+
+    test('離開對弈畫面停鐘並定格秒數，切回來自動續鐘', () => {
+      const sandbox = sandboxWithMainLifecycle({ hash: '#play', useRealTimer: true });
+      startTimedGame(sandbox, { minutes: 5 });   // 黑白各 300 秒
+      sandbox.clock.advance(20_000);
+      sandbox.clock.tick();
+      expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 280, 2: 300 });
+
+      navigate(sandbox, '#gomoku');
+
+      // 停鐘當下的精確剩餘要寫進 snapshot，否則得等下一次圍棋操作才定格。
+      expect(readSavedGame(sandbox.localStorage).timerSeconds).toEqual({ 1: 280, 2: 300 });
+
+      // 在別的棋種畫面燒掉 60 秒，圍棋的鐘不能跟著走。
+      sandbox.clock.advance(60_000);
+      sandbox.clock.tick();
+      expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 280, 2: 300 });
+
+      // 而且 visibilitychange checkpoint 也不能把這 60 秒寫進 snapshot。
+      sandbox.ctx.document.visibilityState = 'hidden';
+      sandbox.ctx.document.dispatchEvent({ type: 'visibilitychange' });
+      expect(readSavedGame(sandbox.localStorage).timerSeconds).toEqual({ 1: 280, 2: 300 });
+
+      // 切回對弈：對局仍在進行，自動續鐘（否則對局等於被無故中斷）。
+      navigate(sandbox, '#play');
+      sandbox.clock.advance(10_000);
+      sandbox.clock.tick();
+      expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 270, 2: 300 });
+    });
+
+    test('終局後離開再切回來不會重新起鐘', () => {
+      const sandbox = sandboxWithMainLifecycle({ hash: '#play', useRealTimer: true });
+      startTimedGame(sandbox, { minutes: 5 });
+      sandbox.clock.advance(20_000);
+      sandbox.ctx.doResign();   // 終局，endGame() 會停鐘
+      const atEnd = { ...sandbox.GameState.getState().timerSeconds };
+
+      navigate(sandbox, '#gomoku');
+      navigate(sandbox, '#play');
+      sandbox.clock.advance(30_000);
+      sandbox.clock.tick();
+
+      expect(sandbox.GameState.getState().timerSeconds).toEqual(atEnd);
+    });
+  });
+
   // ——— 覆盤「換個下法試試」→「返回原始棋譜」———
   /**
    * 建一局 pvp 原譜（3 手落子 + 1 手虛手，最後一手經 doPass 觸發存檔），
