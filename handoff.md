@@ -170,15 +170,65 @@ Final reviewer 已獨立查證：
 
 已揭露的連帶顯示變化：`endGame()` 本身沒有 `updateUI()`（既有缺口），所以「雙虛手 → 數目 → 確認結果」後徽章停在進入數目時推入的那筆，由修正前的「白方、3 手」變成「黑方、4 手」。兩者都不是「遊戲結束」，但新值手數正確且與 `GameState` 一致，reviewer 判定為中性偏改善，且該畫面有 `#resultModal` 覆蓋，視覺影響有限。
 
+## 待討論並決定：組 C 行為變更
+
+這七項都會改變已上架 App 的可觀察行為，而且好幾項的「正確行為」不是自明的，屬於產品決定而非技術問題。**尚未討論，尚未動手。** 下次要處理時先逐項決定目標行為，再開實作分支。
+
+每項的格式是「現況 → 要決定什麼」。
+
+### C1. 離開 `#play` 切換其他棋種時，圍棋計時是否該停
+
+現況：不會停。而且 `pagehide`／`visibilitychange` checkpoint 現在會把「在別的棋種畫面燒掉的時間」也寫進 snapshot（base 不會，因為 base 只在圍棋操作點存檔）。
+
+要決定：離開棋局畫面算不算「暫停對局」？若算，切回來要不要自動續鐘？這牽涉到使用者對「計時對局」的心理模型。
+
+### C2. `isScoring` 要不要持久化
+
+現況：從不持久化。所以數目期間 reload 會回到對局狀態；PvC 若手番屬 AI，`loadGame()` 會直接讓 AI 走一手。base 的行為是要求使用者重新虛手兩次。
+
+要決定：reload 後應該回到數目畫面，還是回到對局？這是產品決定。若選前者，`gogame_state` 格式要加欄位（已上架，需考慮舊 snapshot 的預設值）；若選後者，則要處理「不該讓 AI 自動走一手」。
+
+### C3. 虛手按鈕與 `requestAIMove()` 的手番／`isScoring` 守門
+
+現況：都沒有守門。7 個 AI 排程點各有一個 100 ms 窗口，窗口內按虛手會把該手記成 AI 顏色，污染棋譜與 SGF。base 有 5 個同形實例，本次重構新增 2 個（`doUndo()`、`cancelScoring()`）。
+
+要決定：守門加在哪一層。加在 `doPass()` 會擋掉 AI 自己的虛手，所以應該加在使用者入口 `doPassAndSave`；但要一次處理全部 7 個排程點，不能只補一處。
+
+### C4. `returnToOriginal()` 要不要 `saveGame()`
+
+現況：不存檔，所以「返回原譜」後 reload 會回到練習分支。已比對確認是 base 就有的行為。
+
+要決定：覆盤的練習分支算不算該持久化的狀態？
+
+### C5. `_timerOnTimeout()` 與 AI 落子的守門順序
+
+現況：`_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。理論上 AI 思考中超時，AI 那一手仍可能落在 `gameOver` 之後。
+
+要決定：超時當下該不該中止進行中的 AI 求手，還是讓它落完再判超時。
+
+### C6. `cancelScoring()` 的 AI 排程冪等性
+
+現況：連呼叫兩次會排兩次求手。有 `isAIThinking` lock 兜底、面板呼叫一次後已隱藏，實務不可達。
+
+要決定：值不值得為理論上的不可達路徑加防護。這項最接近「不做也可以」。
+
+### C7. `updateHUD()` 的 `isAIThinking` normalization
+
+現況：`isAIThinking && currentPlayer !== BLACK` 這個條件使人類執白時，AI 真的在思考、徽章卻顯示「黑方」而非「AI 思考中」。
+
+要決定：這是刻意的還是遺留？若要修，人類執白時 AI 思考中該顯示什麼？行為已由測試凍結，改之前先確認想要的顯示。
+
+---
+
 ## Follow-up 清單
 
 ### 第一級，下次發布前必須揭露的行為差異
 
 註記：這次是 fast-forward merge，沒有 merge commit。使用者可見的行為變更已寫進 `CHANGELOG-ios.md` 的「未發布」段落，下次發版時填入版號即可。以下三項則是給開發者的技術面差異，不適合寫進面向使用者的 changelog。
 
-1. 離開 `#play` 切換其他棋種後圍棋計時仍在跑（既有行為），但 `pagehide`／`visibilitychange` checkpoint 現在會把「在別的棋種畫面燒掉的時間」也寫進 snapshot，base 不會。建議後續一起處理「離開 `#play` 停鐘」。
-2. reload 落在雙虛手 snapshot 且 PvC 手番屬 AI 時，`loadGame()` 會直接讓 AI 走一手。根因是 `isScoring` 從不持久化。base 則是要求使用者重新虛手兩次，差別在手番歸誰，且 AI 那一手可悔棋。
-3. `doUndo()` 與 `cancelScoring()` 新增兩個 100 ms AI 排程窗口，使同形實例從 base 的 5 個變成 7 個。後果不是卡死，而是窗口內按虛手會把該手記成 AI 顏色，污染棋譜與 SGF。
+1. 離開 `#play` 切換其他棋種後圍棋計時仍在跑（既有行為），但 `pagehide`／`visibilitychange` checkpoint 現在會把「在別的棋種畫面燒掉的時間」也寫進 snapshot，base 不會。修正方向見 **C1**。
+2. reload 落在雙虛手 snapshot 且 PvC 手番屬 AI 時，`loadGame()` 會直接讓 AI 走一手。根因是 `isScoring` 從不持久化。base 則是要求使用者重新虛手兩次，差別在手番歸誰，且 AI 那一手可悔棋。修正方向見 **C2**。
+3. `doUndo()` 與 `cancelScoring()` 新增兩個 100 ms AI 排程窗口，使同形實例從 base 的 5 個變成 7 個。後果不是卡死，而是窗口內按虛手會把該手記成 AI 顏色，污染棋譜與 SGF。修正方向見 **C3**。
 
 ### 第二級，已於 follow-up 清理批次完成
 
@@ -190,15 +240,15 @@ Final reviewer 已獨立查證：
 6. ~~`useRealTimer` 旗標的雙重職責~~ 已於 `eaf0e0d` 處理。**沒有**照原本設想拆成兩個旗標（拆完漏帶新旗標的後果一模一樣），改為假 scheduler 恆常安裝，旗標語意收窄為「只決定要不要載入真實 `timer.js`」。刻意不改名：14 個呼叫點用解構預設值 `= false`，改名會讓舊名被靜默忽略，正是要根治的失效類型。附帶修好 jest 平行執行的 worker 計時器洩漏警告。更正一項當初的宣稱：那種空洞斷言在本 repo 從未實際存在（base 與 HEAD 稽核皆為 0 條），改動的實證效益是消除 worker 洩漏與防止未來發生。
 7. ~~`ui.js` 渲染層零自動化覆蓋~~ 已於 `e3a9de2` 完成。spike 推翻了原本的假設：這個專案的測試是 `testEnvironment: 'node'` + `vm.createContext()` 自建 realm，**從頭到尾沒有 jsdom**，所以擋路的不是 canvas 而是 helpers 把 `ui.js` 整組 mock 掉的決定。採路線 C：`localRequire('./ui.js')` 載入真實模組，就地覆寫 `drawBoard`／`drawWinrateGraph`（那兩條繼續交給瀏覽器 smoke），零新增依賴、既有測試零修改。12 個 export 中 10 個現在是真的。
 8. ~~「計時局 → 計時局」路徑無測試~~ 已於 `501d768` 補上。注意它與既有的「計時 → 不計時」測試互補、不可合併：這條路徑對 `stopTimer()` 排序 bug 免疫（被 `GoTimer.init` 的整份覆寫遮蔽），真正守住那個 bug 的是「計時 → 不計時」那條。
-9. 虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門。建議整批補在使用者入口 `doPassAndSave`，不要只補一處。
-10. `returnToOriginal()` 未 `saveGame()`，返回原譜後 reload 會回到練習分支。已比對 `main` 分支確認為既有行為。
-11. `updateHUD()` 的 `isAIThinking && currentPlayer !== BLACK` normalization 使人類執白時「AI 思考中」徽章永不顯示。既有行為。
+9. 虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門。**見上方 C3**，待討論。
+10. `returnToOriginal()` 未 `saveGame()`，返回原譜後 reload 會回到練習分支。**見上方 C4**，待討論。
+11. `updateHUD()` 的 `isAIThinking && currentPlayer !== BLACK` normalization 使人類執白時「AI 思考中」徽章永不顯示。**見上方 C7**，待討論。
 12. ~~`doUndo()` 排程觸發條件的註解敘述錯誤~~ 已於 `a1196b2` 修正。真正的觸發條件是「盤上只有 AI 開局那一手時悔棋」與「從已卡在 AI 手番的狀態恢復」，不是原本寫的「悔兩手後回到輪 AI」（悔兩手其實保留手番）。
-13. `cancelScoring()` 的 AI 排程不具冪等性，連呼叫兩次會排兩次。有 `isAIThinking` lock 兜底，面板已隱藏，實務不可達。
+13. `cancelScoring()` 的 AI 排程不具冪等性，連呼叫兩次會排兩次。**見上方 C6**，待討論。
 14. ~~`ui.js` 的三行 `setText` 死碼~~ 已於 `ee6db06` 刪除，連帶移除只被那三行使用的 `setText` 輔助函式。
 15. ~~`style.css` 的 `.current-turn` 孤兒規則~~ 已於 `ee6db06` 刪除。其中 3 條 `::before` 是與仍在使用的 `.turn-badge` 共用的選擇器串，只拆掉 `.current-turn` 那半；reviewer 用腳本逐字元比對確認 7 個 `.turn-badge` 規則的選擇器與宣告區塊在前後兩版完全相同。
 16. ~~`GameState.setAiLevel()` 不夾值~~ 已於 `3628b7d` 補上，範圍從 `adaptive-difficulty.js` 讀 `MIN_LEVEL`／`MAX_LEVEL`，非寫死數字。
-17. `_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。理論上 AI 思考中超時，AI 那一手仍可能落在 `gameOver` 之後。既有行為，未加劇。
+17. `_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。**見上方 C5**，待討論。
 18. ~~`regression_notes_status_sync.txt` 提到已刪除的 `turnDisplay`~~ 已於 `ee6db06` 處理。決定保留檔案不刪、也不改寫有時間戳的內文（改寫等於偽造記錄），只在檔首加 4 行過期說明，讓日後 grep 命中時第一行就自我解釋。Reviewer 逐句驗證過那 4 行說明皆正確。
 19. `aiLevel` 仍有兩條繞過 `setAiLevel()` 的直寫路徑：`game-state.js` 的 `createInitialState()` 與 `restoreSnapshot()` 都是 `snapshot.aiLevel || 10`，未夾值。損毀的 localStorage 仍可塞進超範圍值。不阻擋（`levelConfig()` 與 `nextLevelForMode()` 內部各自夾過範圍，AI 實際強度不受影響）。
 20. `#statusMsg` 這個元素在任何 HTML 都不存在，`setStatus()` 對它的寫入永遠走 null guard。未來可考慮連同 guard 一起清掉。
