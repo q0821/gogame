@@ -2,6 +2,7 @@ import {
   BLACK, WHITE, createBoard as _createBoard,
   cloneBoard, opponent, tryPlaceStone, estimateDeadStones
 } from './rules.js';
+import { MIN_LEVEL, MAX_LEVEL } from './adaptive-difficulty.js';
 
 let state = null;
 
@@ -170,8 +171,18 @@ export function setAIThinking(value) {
 
 export function setAiLevel(level) {
   const current = ensureState();
-  current.aiLevel = level;
+  current.aiLevel = clampAiLevel(level);
   return current;
+}
+
+// AI 等級的範圍不變式收進 store，不再只靠每個呼叫端各自夾值。上下界取自
+// adaptive-difficulty.js 的等級表（不寫死數字，等級表增減時自動跟著走）；
+// 非數值退回最低級，避免把 NaN 寫進狀態再被 saveGame() 存成 null。
+// 寫法比照 main.js loadAiLevel() 既有的 Number.isFinite 判斷。
+function clampAiLevel(level) {
+  return Number.isFinite(level)
+    ? Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, level))
+    : MIN_LEVEL;
 }
 
 export function setTimerSeconds(seconds = {}) {

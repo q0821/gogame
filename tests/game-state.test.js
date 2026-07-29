@@ -1,9 +1,10 @@
 const { sandboxWithGameState } = require('./helpers');
 
-let GameState, GoRules;
+let GameState, GoRules, ctx;
 beforeEach(() => {
   // Fresh sandbox per test so state doesn't leak between tests
-  ({ GameState, GoRules } = sandboxWithGameState());
+  ctx = sandboxWithGameState();
+  ({ GameState, GoRules } = ctx);
 });
 
 const BLACK = 1;
@@ -468,6 +469,38 @@ describe('semantic state mutations', () => {
   test('setAiLevel 更新目前棋局等級', () => {
     GameState.setAiLevel(7);
     expect(GameState.getState().aiLevel).toBe(7);
+  });
+
+  test('setAiLevel 把等級夾在 adaptive-difficulty 的合法範圍內', () => {
+    // aiLevel 的範圍不變式原本全靠呼叫端（main.js）維持，store 本身是 raw write。
+    // 範圍上下界一律從 adaptive-difficulty.js 讀，不寫死數字——等級表加減一列時
+    // 這個測試會跟著走，不會變成新的過期常數。
+    const { MIN_LEVEL, MAX_LEVEL } = ctx.localRequire('./adaptive-difficulty.js');
+    const read = (input) => {
+      GameState.setAiLevel(input);
+      return GameState.getState().aiLevel;
+    };
+    expect({
+      tooLow: read(MIN_LEVEL - 5),
+      tooHigh: read(MAX_LEVEL + 99),
+      atMin: read(MIN_LEVEL),
+      atMax: read(MAX_LEVEL),
+      inRange: read(7)
+    }).toEqual({
+      tooLow: MIN_LEVEL,
+      tooHigh: MAX_LEVEL,
+      atMin: MIN_LEVEL,
+      atMax: MAX_LEVEL,
+      inRange: 7
+    });
+  });
+
+  test('setAiLevel 收到非數值時退回最低級，不寫入 NaN', () => {
+    const { MIN_LEVEL } = ctx.localRequire('./adaptive-difficulty.js');
+    GameState.setAiLevel(undefined);
+    expect(GameState.getState().aiLevel).toBe(MIN_LEVEL);
+    GameState.setAiLevel(NaN);
+    expect(GameState.getState().aiLevel).toBe(MIN_LEVEL);
   });
 
   test('setTimerSeconds 複製輸入，外部後續修改不影響 store', () => {
