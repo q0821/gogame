@@ -170,11 +170,17 @@ Final reviewer 已獨立查證：
 
 已揭露的連帶顯示變化：`endGame()` 本身沒有 `updateUI()`（既有缺口），所以「雙虛手 → 數目 → 確認結果」後徽章停在進入數目時推入的那筆，由修正前的「白方、3 手」變成「黑方、4 手」。兩者都不是「遊戲結束」，但新值手數正確且與 `GameState` 一致，reviewer 判定為中性偏改善，且該畫面有 `#resultModal` 覆蓋，視覺影響有限。
 
-## 待討論並決定：組 C 行為變更
+## 組 C 行為變更：已完成
 
-這七項都會改變已上架 App 的可觀察行為，而且好幾項的「正確行為」不是自明的，屬於產品決定而非技術問題。**尚未討論，尚未動手。** 下次要處理時先逐項決定目標行為，再開實作分支。
+七項全部完成，commit `3004d9e`..`29dcba7`（7 個）。測試 458 → 476，獨立 review 判定無 Critical 無 Important，瀏覽器 smoke 12／12 PASS、無卡死。
 
-每項的格式是「現況 → 要決定什麼」。
+以下保留每項的「原始現況 → 待決事項」，並在各節末補上**實際決定與實情**。有三項的實情與原本的描述不同，那三處特別標了出來。
+
+### 上線注意事項
+
+**這批上到 web 之後不要回滾 bundle。** 新版會寫 `isScoring: true` 進 `gogame_state`，舊版讀得到該欄位但沒有重建數目畫面的邏輯，會進入「狀態說在數目、畫面卻是對局」且自己存不出去也清不掉的不一致，只能靠「重新開始」脫身。
+
+Reviewer 查證過其他管道都不可達：web 與 iOS 不共用 localStorage（iOS 走內嵌 HTTP server 的 `localhost:PORT`，與 web 網域不同 origin）、iOS 使用者無法從 App Store 降版、`public/sw.js` 對 navigate 是 refresh-first 只會往前。**唯一實際可達的觸發就是 web 部署回滾。**
 
 ### C1. 離開 `#play` 切換其他棋種時，圍棋計時是否該停
 
@@ -182,11 +188,23 @@ Final reviewer 已獨立查證：
 
 要決定：離開棋局畫面算不算「暫停對局」？若算，切回來要不要自動續鐘？這牽涉到使用者對「計時對局」的心理模型。
 
+**已完成（`de8a071` + `29dcba7`）**：算暫停。離開停鐘並存檔定格秒數，切回自動續鐘。掛載點選 `showScreen()`（`applyRoute()` 所有分支的唯一收斂點），因為 `enterPlayMode()` 有 `playInited` 保護、只在首次進入時跑。
+
+第一版不完整：PvC 下 AI 那一手在使用者離開後才回來時，`switchTimer()` 會把鐘重新打開，在別的棋種畫面繼續燒時間、甚至在隱藏畫面判超時。`29dcba7` 用 `playTimerSuspended` 旗標修好，`startTimer()` 與 `switchTimer()` 兩處都擋。
+
+**一個實測澄清**：AI 那一手回來時**確實會落進棋譜**（smoke 實測在五子棋畫面上 3 → 4 手），這符合實作意圖 — `isAnalysisRequestCurrent()` 比對的是 board 物件識別、手數、手番與 `gameOver`，換路由這四項都沒變，那一手本來就該落下。真正被守住的是「鐘不會重新啟動」。切回來會看到 AI 已應手，時間沒被燒掉。
+
 ### C2. `isScoring` 要不要持久化
 
 現況：從不持久化。所以數目期間 reload 會回到對局狀態；PvC 若手番屬 AI，`loadGame()` 會直接讓 AI 走一手。base 的行為是要求使用者重新虛手兩次。
 
 要決定：reload 後應該回到數目畫面，還是回到對局？這是產品決定。若選前者，`gogame_state` 格式要加欄位（已上架，需考慮舊 snapshot 的預設值）；若選後者，則要處理「不該讓 AI 自動走一手」。
+
+**實情與上面的描述不同**：`getSnapshot()` **早就包含 `isScoring` 與 `deadStones`**，`restoreSnapshot()` 也讀回來。所以格式不用加欄位、不需 migration。真正卡住的是 `saveGame()` 遇到 `isScoring` 會早退，`isScoring: true` 從來寫不出去。
+
+**已完成（`fdc6309`）**：選回到數目畫面。做法是把 `saveGame()` 的守門放寬成只擋 `isReviewing`（而非只在某一處補存，因為 `saveGame()` 呼叫端太分散，補一處會留一堆縫）；死子切換也存檔是要的保真度。還原時只用本地 `calculateScore()`，不重跑 KataGo ownership。順帶補上 `loadGame()` 的 AI 排程與起鐘條件（原本都沒看 `isScoring`）。
+
+`game-state.js` 這批**一行未改**，snapshot 格式證實零變動。Reviewer 逐一查過全部 14 個 `saveGame()` 呼叫端，沒有寫出不該寫的狀態（特別確認 `confirmScoring()` 會先把 `isScoring` 設回 false，不會寫出 `gameOver` 與 `isScoring` 同時為 true 的矛盾狀態）。
 
 ### C3. 虛手按鈕與 `requestAIMove()` 的手番／`isScoring` 守門
 
@@ -194,11 +212,23 @@ Final reviewer 已獨立查證：
 
 要決定：守門加在哪一層。加在 `doPass()` 會擋掉 AI 自己的虛手，所以應該加在使用者入口 `doPassAndSave`；但要一次處理全部 7 個排程點，不能只補一處。
 
+**已完成（`5eb6d85`）**：都不是加在使用者入口，而是新增 `aiMoveScheduled` 旗標納入 `isGameBusy()`。`isGameBusy()` 已經被 `placeStone`／`doPass`／`doUndo`／`doResign`／`finishGame` 全部使用，一處改動就把所有窗口關掉。旗標留在 `main.js`，不進 `GameState`、不碰 snapshot。
+
+**排程點是 8 個不是 7 個** — 第 8 個藏在 `ai-controller.js` 整輪失敗後的 1.5 秒重試，同一問題類型，已一併改走 `scheduleAIMove()`。
+
+清除路徑經 reviewer 獨立窮舉，論證可收斂成兩條：`setTimeout` callback 第一件事就是清旗標（所以 `requestAIMove()` 內部發生什麼都與旗標無關）；旗標為 true 時必定有 pending timer，只有觸發或被 `clearTimeout` 兩種下場。瀏覽器 smoke 從「開新局」「AI 整輪失敗」「連點」三條路徑實測都會解除。
+
 ### C4. `returnToOriginal()` 要不要 `saveGame()`
 
 現況：不存檔，所以「返回原譜」後 reload 會回到練習分支。已比對確認是 base 就有的行為。
 
 要決定：覆盤的練習分支算不算該持久化的狀態？
+
+**已完成（`55380ca`）**：不算，返回原譜後存的是原譜。
+
+**只補 `saveGame()` 是靜默 no-op** — 快照拍在 `exitReview()` 之前，`isReviewing: true` 會被 `saveGame()` 的守門擋掉，等於白補。已用測試證實（4 手 vs 3 手），所以一併加了 `GameState.exitReview()`。
+
+**附帶的可見變化**：返回原譜後盤面由「分支點局部盤面」改為「完整原譜盤面」。改動前那是「盤面停在覆盤游標、卻沒有任何導航控制項可離開」的死狀態，新行為是完整盤面配上可再次進入覆盤的按鈕。Smoke 目視確認合理（10 手棋譜、最後一手紅圈落在原譜第 10 手、徽章「遊戲結束」與狀態列「已返回原始棋譜」三者自洽）。
 
 ### C5. `_timerOnTimeout()` 與 AI 落子的守門順序
 
@@ -206,17 +236,29 @@ Final reviewer 已獨立查證：
 
 要決定：超時當下該不該中止進行中的 AI 求手，還是讓它落完再判超時。
 
+**實情與上面的描述不同**：超時路徑**原本就攔得住**。`_timerOnTimeout()` 已正確判超時方輸（算 winner、調整等級 ±30、`endGame('X方勝', 'Y方超時')`），而 `placeStone()` 開頭的 `isGameBlocked()` 已含 `gameOver`。
+
+真正會出事的是**「AI 求手期間按開始新遊戲」**：`newGame()` 除了 `window.confirm` 沒有任何 `isGameBusy()` 守門，新局的 `gameOver`／`isAIThinking` 都是 false，兩道守門全放行，舊局那一手會落在新局盤面上。
+
+**已完成（`1f89549`）**：改用既有的 `isAnalysisRequestCurrent()`（比對 board 物件識別＋手數＋手番＋`!gameOver`），一次涵蓋兩條路徑，沿用既有機制而非另造一套。順帶修好「AI 思考中按返回原譜」的同一條 problem class。Smoke 實測：舊局 1 手 + AI 思考中 → 按重新開始 → 新局 9 個取樣點 `moveHistory` 全為空。
+
 ### C6. `cancelScoring()` 的 AI 排程冪等性
 
 現況：連呼叫兩次會排兩次求手。有 `isAIThinking` lock 兜底、面板呼叫一次後已隱藏，實務不可達。
 
 要決定：值不值得為理論上的不可達路徑加防護。這項最接近「不做也可以」。
 
+**已完成（`5eb6d85`，與 C3 同一個 commit）**：C3 的 `aiMoveScheduled` 旗標順便解決，零額外成本 — 有旗標就能檢查「已排過」，冪等性自動成立。
+
 ### C7. `updateHUD()` 的 `isAIThinking` normalization
 
 現況：`isAIThinking && currentPlayer !== BLACK` 這個條件使人類執白時，AI 真的在思考、徽章卻顯示「黑方」而非「AI 思考中」。
 
 要決定：這是刻意的還是遺留？若要修，人類執白時 AI 思考中該顯示什麼？行為已由測試凍結，改之前先確認想要的顯示。
+
+**已完成（`3004d9e`）**：是遺留，而且同一畫面本來就自相矛盾 — `getStatusMessage()` 用的是未經 normalize 的 `state.isAIThinking`，所以狀態列老實顯示「AI 思考中...」，只有徽章被 normalize 成「黑方」。
+
+修法是直接用 `!!state.isAIThinking`（PvP 不會設 `isAIThinking`，不需額外條件）。前一批刻意加來凍結舊行為的那條測試已改成反映新行為。Smoke 實測人類執白時徽章顯示「AI 思考中」、class 為 `turn-badge`（無 `black`），與狀態列一致。
 
 ---
 
