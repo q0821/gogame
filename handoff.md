@@ -180,21 +180,26 @@ Final reviewer 已獨立查證：
 2. reload 落在雙虛手 snapshot 且 PvC 手番屬 AI 時，`loadGame()` 會直接讓 AI 走一手。根因是 `isScoring` 從不持久化。base 則是要求使用者重新虛手兩次，差別在手番歸誰，且 AI 那一手可悔棋。
 3. `doUndo()` 與 `cancelScoring()` 新增兩個 100 ms AI 排程窗口，使同形實例從 base 的 5 個變成 7 個。後果不是卡死，而是窗口內按虛手會把該手記成 AI 顏色，污染棋譜與 SGF。
 
-### 第二級，下一輪優先處理
+### 第二級，已於 follow-up 清理批次完成
 
-4. **`endGame()` 缺 `updateUI()`。** 這是既有缺口，影響所有終局入口（認輸、超時、確認數目），終局後徽章停在前一次 `updateUI()` 推入的值。範圍比 `endGameByScoring()` 那一項大，reviewer 建議另開一輪掃過全部終局路徑統一處理，不要搭小變更夾帶。
+4. ~~**`endGame()` 缺 `updateUI()`。**~~ 已於 `e1f1d7a` 完成。掃過全部終局路徑後確認 `game-state.js` 只有 4 處能讓 `gameOver` 變 true、對應 5 條 `main.js` 路徑，`endGame()`（認輸／超時／確認數目三者收斂）是唯一缺口。`ui.js` 的 `updateHUD()` 本來就把 `gameOver` 分支排在最前面，所以不需改顯示邏輯，缺的只是沒人在終局那一刻把狀態送進去。瀏覽器複驗三條路徑皆顯示「遊戲結束」且手數一致。
 
 ### 第三級，殘餘 minor
 
-5. 死碼群集：`main.js` 8 處未使用回傳值的 `getGoState()`（762、891、1034、1055、1180、1191、1193、1196）、`main.js:105` 的 `get passCount()`、`ui.js:180` 的 `turnDisplay` 分支（`index.html` 無此 id）。Final reviewer 已逐一比對確認可安全清除。
+5. ~~死碼群集~~ 已於 `ff1e3ea` 完成：`main.js` 8 處未使用回傳值的 `getGoState()`、`main.js` 的 `get passCount()`、`ui.js` 的 `turnDisplay` 分支皆已刪除。Reviewer 獨立驗證的理由比原本更強：`game-state.js` 的 `state` 是模組私有、不在任何 export，`ensureState()` 是冪等 lazy init，因此刪除裸呼叫在任何位置都安全。
 6. `tests/helpers.js:585-601` 的 `useRealTimer` 旗標同時控制真 timer 模組與假 `setTimeout`，後續加測試漏帶會讓 `aiCalls: 0` 這類斷言空洞通過。建議拆成 `useRealTimer` 與 `useFakeScheduler` 兩個。目前無實例受害。
 7. `ui.js` 渲染層零自動化覆蓋（state → DOM 文字／class）。要根治需能載入真實 `ui.js`，受阻於 `drawBoard()` 需要真實 canvas context。這是本次唯一漏網 Important 的結構性成因。
 8. 「計時局 → 計時局」路徑套件內無測試，只以一次性探針驗證過。
 9. 虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門。建議整批補在使用者入口 `doPassAndSave`，不要只補一處。
 10. `returnToOriginal()` 未 `saveGame()`，返回原譜後 reload 會回到練習分支。已比對 `main` 分支確認為既有行為。
 11. `updateHUD()` 的 `isAIThinking && currentPlayer !== BLACK` normalization 使人類執白時「AI 思考中」徽章永不顯示。既有行為。
-12. `main.js:573-575` 的註解對 `doUndo()` 排程觸發條件敘述不精確（寫「悔兩手後回到輪 AI」，實測悔兩手保留手番）。行為正確，僅敘述需微調。
+12. ~~`doUndo()` 排程觸發條件的註解敘述錯誤~~ 已於 `a1196b2` 修正。真正的觸發條件是「盤上只有 AI 開局那一手時悔棋」與「從已卡在 AI 手番的狀態恢復」，不是原本寫的「悔兩手後回到輪 AI」（悔兩手其實保留手番）。
 13. `cancelScoring()` 的 AI 排程不具冪等性，連呼叫兩次會排兩次。有 `isAIThinking` lock 兜底，面板已隱藏，實務不可達。
+14. `ui.js` 的 `setText('blackCaptures')`／`setText('whiteCaptures')`／`setText('moveCount')` 三行與已刪的 `turnDisplay` 同屬已退役桌機面板的死碼，三個 id 在全部 HTML 都不存在。清理批次因「不動未點名程式碼」而刻意保留。
+15. `style.css:338-397` 的 `.current-turn` 系列規則在 `turnDisplay` 分支刪除後成為完全孤兒，該 class 不出現在任何 HTML。
+16. `GameState.setAiLevel()` 本身不夾值，AI 等級的範圍不變式完全靠呼叫端維持。日後新增呼叫端需自行確保範圍。
+17. `_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。理論上 AI 思考中超時，AI 那一手仍可能落在 `gameOver` 之後。既有行為，未加劇。
+18. `regression_notes_status_sync.txt` 仍提到已刪除的 `turnDisplay`，是舊除錯筆記非程式碼，日後 grep 可能誤導。
 
 ## 全域限制
 
