@@ -30,6 +30,8 @@ export function makeAiController(app) {
   // ——— AI move ———
   // 整輪失敗後自動恢復重試的次數上限（每輪內部已含一次 reset+重試）。
   const MAX_RECOVER = 1;
+  // 整輪失敗後自動恢復重試的延遲，讓重置後的引擎有時間就緒。
+  const AI_RECOVER_DELAY_MS = 1500;
   let recoverAttempts = 0;
 
   // Watchdog：katagoMove() 底層是 Worker postMessage/onmessage 配對（katago-service.js →
@@ -129,9 +131,13 @@ export function makeAiController(app) {
 
       if (recoverAttempts < MAX_RECOVER) {
         // 整輪失敗：引擎已重置，延遲後自動再算一輪，不丟失當前對局。
+        // 經由 app.scheduleAIMove() 排程（不自己 setTimeout）：這 1.5 秒同樣是「AI 已排程
+        // 但還沒開始思考」的窗口，isAIThinking 為 false，不納入 main.js 的排程旗標的話
+        // isGameBusy() 會回 false，使用者按虛手會穿過去、該手被記成 AI 的顏色。
+        // 與 main.js 的另外 7 個排程點是同一個問題類型，用同一套機制處理。
         recoverAttempts += 1;
         app.setStatus(`AI 發生錯誤（${detail}）— 已重置引擎，自動重試中…`);
-        setTimeout(() => requestAIMove(), 1500);
+        app.scheduleAIMove(AI_RECOVER_DELAY_MS);
       } else {
         // 連自動恢復都失敗（多半是持續性問題），引導開新局；引擎已 reset，新局可恢復。
         recoverAttempts = 0;

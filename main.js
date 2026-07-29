@@ -85,7 +85,16 @@ function isGameBlocked() {
   return state.gameOver || state.isReviewing || state.isScoring;
 }
 
-function isGameBusy()    { return isGameBlocked() || getGoState().isAIThinking; }
+// AI 求手一律經 setTimeout 延遲（AI_MOVE_DELAY_MS／AI_INIT_DELAY_MS）才真的開始，
+// 「已排程但還沒開始思考」這段窗口內 isAIThinking 仍是 false，gameOver／isScoring 也都
+// false，isGameBusy() 會回 false 讓使用者操作整個穿過去（虛手那一手還會被記成 AI 的顏色，
+// 污染棋譜與 SGF 匯出）。這個旗標就是那段窗口的唯一表示。
+//
+// 刻意留在 main.js、不進 GameState：它是暫時性的控制狀態，不是對局狀態，也絕不能進
+// snapshot（gogame_state 格式已上架，不得變動）。頁面重載時自然回到 false。
+let aiMoveScheduled = false;
+
+function isGameBusy()    { return isGameBlocked() || getGoState().isAIThinking || aiMoveScheduled; }
 
 // ==================== APP CONTEXT (shared with sub-modules) ====================
 // The `app` object provides sub-modules with access to mutable state and helpers.
@@ -142,12 +151,37 @@ const app = {
   setStatus: (msg) => setStatus(msg),
   drawBoard: () => drawBoard(),
   reviewGo: (n) => reviewGo(n),
+  scheduleAIMove: (delayMs) => scheduleAIMove(delayMs),
   closeGoSettings,
 };
 
 // ==================== AI CONTROLLER ====================
 const aiController = makeAiController(app);
 app.aiController = aiController;
+
+// 所有 AI 求手排程的唯一入口。設下 aiMoveScheduled 讓 isGameBusy() 把延遲窗口也算成忙碌，
+// 並在真正呼叫 requestAIMove() 之前解除（不能改用 setAIThinking(true) 代替：requestAIMove()
+// 開頭是 `if (app.gameOver || app.isAIThinking) return;`，提早設會讓它自己直接 return）。
+//
+// 同時具備冪等性：已有排程時直接忽略，重複呼叫不會排出兩次求手。
+let _aiMoveTimer = null;
+function scheduleAIMove(delayMs = AI_MOVE_DELAY_MS) {
+  if (aiMoveScheduled) return;
+  aiMoveScheduled = true;
+  _aiMoveTimer = setTimeout(() => {
+    _aiMoveTimer = null;
+    aiMoveScheduled = false;   // 必須在呼叫之前解除，否則 AI 落子後旗標永遠留著
+    aiController.requestAIMove();
+  }, delayMs);
+}
+
+// 換局（開新局／載入存檔／覆盤分支）時取消殘留排程。不取消有兩個後果：舊局的排程會對著
+// 新局叫一次 AI；而且冪等性守門會把新局自己的排程吞掉，AI 從此不動。
+function cancelScheduledAIMove() {
+  if (_aiMoveTimer) clearTimeout(_aiMoveTimer);
+  _aiMoveTimer = null;
+  aiMoveScheduled = false;
+}
 
 // ==================== CAPTURE HINTS ====================
 function showHintOnce() {
@@ -488,7 +522,7 @@ function placeStone(x, y) {
   if (after.timerEnabled) switchTimer();
   saveGame();
   if (willRequestAI) {
-    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+    scheduleAIMove();
   }
   return true;
 }
@@ -537,7 +571,7 @@ function doPass() {
   saveGame();
 
   if (willRequestAI) {
-    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+    scheduleAIMove();
   }
 }
 
@@ -582,7 +616,7 @@ function doUndo() {
     && !afterUndo.gameOver
     && afterUndo.currentPlayer !== afterUndo.playerColor
   ) {
-    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+    scheduleAIMove();
   }
 }
 
@@ -930,7 +964,7 @@ function cancelScoring() {
     && !afterCancel.gameOver
     && afterCancel.currentPlayer !== afterCancel.playerColor
   ) {
-    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+    scheduleAIMove();
   }
 }
 
@@ -1193,6 +1227,7 @@ function replayFromHere() {
   const sideToMove = (cut % 2 === 0) ? BLACK : WHITE;
 
   GameState.exitReview();
+  cancelScheduledAIMove();   // 換局：清掉舊局殘留排程，見 cancelScheduledAIMove()
   GameState.startGame({
     size: original.size,
     gameMode: 'pvc',
@@ -1223,7 +1258,7 @@ function replayFromHere() {
     && replayState.currentPlayer !== replayState.playerColor
     && !replayState.gameOver
   ) {
-    setTimeout(() => aiController.requestAIMove(), AI_MOVE_DELAY_MS);
+    scheduleAIMove();
   }
 }
 
@@ -1338,6 +1373,7 @@ function startNewGame() {
   // GameState。排在 startGame() 之後停，等於把上一局的殘餘秒數寫進新局狀態（並被
   // saveGame() 存進 snapshot）。先停鐘則定格值落在即將被丟棄的舊局狀態上，語意正確。
   stopTimer();
+  cancelScheduledAIMove();   // 換局：清掉舊局殘留排程，見 cancelScheduledAIMove()
 
   GameState.startGame(nextGame);
   updateAiLevelDisplay();
@@ -1372,7 +1408,7 @@ function startNewGame() {
 
   // 不預載引擎；AI 先手時才求手（KataGo lazy 載入，模型約一次性下載 3.8MB）。
   if (aiStartsGame) {
-    setTimeout(() => aiController.requestAIMove(), AI_INIT_DELAY_MS);
+    scheduleAIMove(AI_INIT_DELAY_MS);
   }
 }
 
@@ -1408,6 +1444,7 @@ function loadGame() {
 
     GameState.restoreSnapshot(s);
     GameState.setAIThinking(false);
+    cancelScheduledAIMove();   // 換局：清掉殘留排程，見 cancelScheduledAIMove()
     GameState.setAiLevel(loadAiLevel());
     const state = getGoState();
 
@@ -1445,7 +1482,7 @@ function loadGame() {
       && !state.gameOver
       && state.currentPlayer !== state.playerColor
     ) {
-      setTimeout(() => aiController.requestAIMove(), AI_INIT_DELAY_MS);
+      scheduleAIMove(AI_INIT_DELAY_MS);
     }
     return true;
   } catch(e) {

@@ -432,6 +432,10 @@ describe('圍棋主流程狀態生命週期', () => {
       startPvcGame(sandbox, { playerColor });
 
       sandbox.ctx.doPass(); // 黑虛手（人類執黑時是人類；人類執白時是 AI）
+      // 人類執黑時，上一手虛手後會排一次 AI 求手，該排程窗口內 isGameBusy() 為 true，
+      // 第二次 doPass() 會被擋掉（正是排程旗標要擋的事）。先把排程跑掉，模擬「AI 回合
+      // 真的來了」，第二手虛手才是合法的下一步。
+      sandbox.clock.runTimeouts();
       sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目
       expect(sandbox.GameState.getState().isScoring).toBe(true);
       sandbox.clock.runTimeouts();
@@ -818,6 +822,76 @@ describe('圍棋主流程狀態生命週期', () => {
       // 人類執白：AI 執黑先手，悔兩手後回到開局仍輪 AI，沒人叫 AI 棋局就停住。
       { playerColor: 2, currentPlayer: 1, moves: 0, aiCalls: 1 }
     ]);
+  });
+
+  // ——— AI 求手排程窗口（「已排程但還沒開始思考」）———
+  // AI 求手一律經 setTimeout 延遲 100ms（AI_MOVE_DELAY_MS）或 300ms（AI_INIT_DELAY_MS）
+  // 才真的開始。這段窗口內 isAIThinking 還是 false、gameOver／isScoring 也都 false，
+  // isGameBusy() 因此回 false，使用者的虛手／認輸等操作會整個穿過去（虛手那一手還會被
+  // 記成 AI 的顏色，污染棋譜與 SGF 匯出）。排程旗標就是要讓這段窗口也算「忙碌」。
+  describe('AI 求手排程窗口', () => {
+    test('排程窗口內按虛手不會穿過去', () => {
+      const sandbox = sandboxWithMainLifecycle({});
+      startPvcGame(sandbox, { playerColor: 1 });
+
+      sandbox.ctx.doPass();   // 人類（黑）虛手 → 輪 AI（白），排一次求手
+      sandbox.ctx.doPass();   // 排程窗口內再按一次：這手若穿過去會被記成白（AI）的虛手
+
+      const state = sandbox.GameState.getState();
+      expect({
+        moves: state.moveHistory.length,
+        passCount: state.passCount,
+        isScoring: state.isScoring
+      }).toEqual({ moves: 1, passCount: 1, isScoring: false });
+
+      // 排程本身仍要照常執行，別把窗口關成「AI 永遠不動」。
+      sandbox.clock.runTimeouts();
+      expect(sandbox.requestAIMove).toHaveBeenCalledTimes(1);
+    });
+
+    test('排程執行後旗標即解除，操作重新可用', () => {
+      const sandbox = sandboxWithMainLifecycle({});
+      startPvcGame(sandbox, { playerColor: 1 });
+
+      sandbox.ctx.doPass();     // 排一次 AI 求手
+      sandbox.ctx.doResign();   // 窗口內：認輸應被擋（doResign 走 isGameBusy()）
+      const blocked = sandbox.GameState.getState().gameOver;
+
+      sandbox.clock.runTimeouts();  // 排程執行，旗標必須在此解除
+      sandbox.ctx.doResign();       // 旗標若卡住，這裡也會被擋 → 棋盤永遠點不動
+      const afterRelease = sandbox.GameState.getState().gameOver;
+
+      expect({ blocked, afterRelease }).toEqual({ blocked: false, afterRelease: true });
+    });
+
+    test('取消數目連呼叫兩次只排一次 AI 求手', () => {
+      const sandbox = sandboxWithMainLifecycle({});
+      startPvcGame(sandbox, { playerColor: 1 });
+      sandbox.GameState.applyMove(0, 0);   // 黑（人類）一手 → 輪白（AI）
+      sandbox.ctx.finishGame();            // 申請數目
+      expect(sandbox.GameState.getState().isScoring).toBe(true);
+
+      sandbox.ctx.cancelScoring();
+      sandbox.ctx.cancelScoring();         // 冪等性：第二次不該再排一次
+      sandbox.clock.runTimeouts();
+
+      expect(sandbox.requestAIMove).toHaveBeenCalledTimes(1);
+    });
+
+    test('開新局會取消舊局殘留的 AI 排程', () => {
+      const sandbox = sandboxWithMainLifecycle({});
+      startPvcGame(sandbox, { playerColor: 1 });
+      sandbox.ctx.doPass();          // 舊局排了一次 AI 求手，尚未執行
+
+      sandbox.ctx.startNewGame();    // 新局人類執黑先手，不需要 AI 求手
+      sandbox.clock.runTimeouts();
+      // 舊局的排程若沒被取消，會對著新局叫一次 AI。
+      expect(sandbox.requestAIMove).toHaveBeenCalledTimes(0);
+
+      // 且旗標不能被舊局的排程卡住，否則新局從第一手就點不動。
+      sandbox.ctx.doPass();
+      expect(sandbox.GameState.getState().moveHistory).toHaveLength(1);
+    });
   });
 
   // ——— 覆盤「換個下法試試」→「返回原始棋譜」———

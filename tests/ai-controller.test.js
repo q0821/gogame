@@ -32,7 +32,12 @@ function makeApp(overrides = {}) {
     aiMoveWatchdogMs: 20, // 測試用短逾時，避免真的等 20 秒
     ...overrides
   };
-  const calls = { setAIThinking: [], placeStone: [], doPassCount: 0, setStatus: [] };
+  const calls = { setAIThinking: [], placeStone: [], doPassCount: 0, setStatus: [], scheduleAIMove: [] };
+  // main.js 的 app.scheduleAIMove()：延遲後叫一次 requestAIMove()，並在延遲窗口內把
+  // aiMoveScheduled 設起來讓 isGameBusy() 擋住使用者操作。controller 要等 makeApp()
+  // 回傳後才建得出來，故用 holder 做 late binding，測試建好 controller 後呼叫
+  // bindController() 接上（本檔所有測試都接，避免日後新增測試漏接時靜默失效）。
+  const holder = { controller: null };
   const app = {
     get gameOver() { return state.gameOver; },
     get isAIThinking() { return state.isAIThinking; },
@@ -53,10 +58,15 @@ function makeApp(overrides = {}) {
     syncStatus() {},
     updateUI() {},
     setStatus(msg) { calls.setStatus.push(msg); },
-    placeStone(x, y) { calls.placeStone.push([x, y]); return true; }
+    placeStone(x, y) { calls.placeStone.push([x, y]); return true; },
+    scheduleAIMove(delayMs) {
+      calls.scheduleAIMove.push(delayMs);
+      setTimeout(() => holder.controller && holder.controller.requestAIMove(), delayMs);
+    }
   };
   Object.defineProperty(app, 'doPass', { value: () => { calls.doPassCount += 1; } });
-  return { app, state, calls };
+  const bindController = (controller) => { holder.controller = controller; };
+  return { app, state, calls, bindController };
 }
 
 function tick(ms) {
@@ -71,8 +81,9 @@ describe('requestAIMove watchdog：Worker 卡死不 settle 時不永久卡住', 
       reset: jest.fn()
     };
     const ctx = sandboxWithAiController(mockKataGo);
-    const { app, calls } = makeApp();
+    const { app, calls, bindController } = makeApp();
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     const movePromise = controller.requestAIMove();
 
@@ -114,8 +125,9 @@ describe('requestAIMove 正常路徑：watchdog 不誤觸發', () => {
       reset: jest.fn()
     };
     const ctx = sandboxWithAiController(mockKataGo);
-    const { app, calls } = makeApp();
+    const { app, calls, bindController } = makeApp();
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     await controller.requestAIMove();
 
@@ -132,8 +144,9 @@ describe('requestAIMove 正常路徑：watchdog 不誤觸發', () => {
       reset: jest.fn()
     };
     const ctx = sandboxWithAiController(mockKataGo);
-    const { app } = makeApp({ isAIThinking: true });
+    const { app, bindController } = makeApp({ isAIThinking: true });
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     await controller.requestAIMove();
 
@@ -169,8 +182,9 @@ describe('requestAIMove 的非同步邊界守門', () => {
   test('求手期間對局結束（計時超時判負）→ 回來後不落子', async () => {
     const { mock, release } = deferredKataGo();
     const ctx = sandboxWithAiController(mock);
-    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const { app, state, calls, bindController } = makeApp({ board: emptyBoard() });
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     const movePromise = controller.requestAIMove();
     await tick(5);
@@ -189,8 +203,9 @@ describe('requestAIMove 的非同步邊界守門', () => {
   test('求手期間使用者開新局 → 那一手不會落到新局上', async () => {
     const { mock, release } = deferredKataGo();
     const ctx = sandboxWithAiController(mock);
-    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const { app, state, calls, bindController } = makeApp({ board: emptyBoard() });
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     const movePromise = controller.requestAIMove();
     await tick(5);
@@ -209,8 +224,9 @@ describe('requestAIMove 的非同步邊界守門', () => {
   test('求手期間對局結束 → 回來後即使該虛手也不虛手', async () => {
     const { mock, release } = deferredKataGo();
     const ctx = sandboxWithAiController(mock);
-    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const { app, state, calls, bindController } = makeApp({ board: emptyBoard() });
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     const movePromise = controller.requestAIMove();
     await tick(5);
@@ -226,8 +242,9 @@ describe('requestAIMove 的非同步邊界守門', () => {
   test('對局未變動時照常落子（守門不誤擋正常路徑）', async () => {
     const { mock, release } = deferredKataGo();
     const ctx = sandboxWithAiController(mock);
-    const { app, calls } = makeApp({ board: emptyBoard() });
+    const { app, calls, bindController } = makeApp({ board: emptyBoard() });
     const controller = ctx.makeAiController(app);
+    bindController(controller);
 
     const movePromise = controller.requestAIMove();
     await tick(5);
