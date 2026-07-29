@@ -1230,6 +1230,13 @@ function replayFromHere() {
 function returnToOriginal() {
   if (!savedOriginalGame) return;
   GameState.restoreSnapshot(savedOriginalGame);
+  // savedOriginalGame 是 replayFromHere() 在 GameState.exitReview() **之前**拍的快照，
+  // isReviewing 為 true、currentReviewMove 停在分支點。還原後必須退出覆盤狀態，理由有二：
+  //   1. 本函式接著就把 reviewBar／exitReviewBtn 收起來、把「覆盤」鈕放回去，狀態留在
+  //      isReviewing=true 等於「盤面停在覆盤游標、卻沒有任何覆盤控制項」的死狀態。
+  //   2. saveGame() 開頭是 `if (state.isReviewing) return;`，不退出的話下面那行存檔會是
+  //      靜默 no-op，snapshot 留著練習分支，reload 就回不到原譜（本函式要修的正是這個）。
+  GameState.exitReview();
   savedOriginalGame = null;
   const state = getGoState();
   document.getElementById('returnOriginalBtn').style.display = 'none';
@@ -1239,6 +1246,8 @@ function returnToOriginal() {
   setStatus('已返回原始棋譜');
   updateUI();
   drawBoard();
+  // 不存檔的話 snapshot 仍停在練習分支，reload 會回到分支而不是原譜。
+  saveGame();
 }
 
 // ==================== UI ====================

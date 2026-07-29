@@ -819,4 +819,55 @@ describe('圍棋主流程狀態生命週期', () => {
       { playerColor: 2, currentPlayer: 1, moves: 0, aiCalls: 1 }
     ]);
   });
+
+  // ——— 覆盤「換個下法試試」→「返回原始棋譜」———
+  /**
+   * 建一局 pvp 原譜（3 手落子 + 1 手虛手，最後一手經 doPass 觸發存檔），
+   * 進覆盤退到第 2 手後分支出練習局，並在練習局虛手一次讓分支被寫進 snapshot。
+   * 回傳的 sandbox 停在「練習分支已持久化、尚未按返回原譜」的狀態。
+   */
+  function branchedPracticeGame(sharedStorage) {
+    const sandbox = sandboxWithMainLifecycle({ sharedStorage });
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.GameState.applyMove(0, 0);
+    sandbox.GameState.applyMove(1, 1);
+    sandbox.GameState.applyMove(2, 2);
+    sandbox.ctx.doPass();          // 第 4 手；doPassAndSave 把 4 手原譜寫進 snapshot
+
+    sandbox.ctx.enterReview();
+    sandbox.ctx.reviewGo(2);       // 退到第 2 手
+    sandbox.ctx.replayFromHere();  // 由第 2 手分支出練習局（pvc）
+    sandbox.ctx.doPass();          // 練習局第 3 手，寫進 snapshot
+    return sandbox;
+  }
+
+  test('返回原譜前，持久化的是練習分支（前置條件）', () => {
+    const sharedStorage = createMockLocalStorage();
+    const sandbox = branchedPracticeGame(sharedStorage);
+
+    expect(readSavedGame(sharedStorage).moveHistory).toHaveLength(3);
+    expect(sandbox.GameState.getState().moveHistory).toHaveLength(3);
+  });
+
+  test('返回原譜會存檔，重新載入回到原始棋譜而非練習分支', () => {
+    const sharedStorage = createMockLocalStorage();
+    const sandbox = branchedPracticeGame(sharedStorage);
+
+    sandbox.ctx.returnToOriginal();
+
+    // 存檔內容必須是 4 手原譜。注意光補 saveGame() 是不夠的：restoreSnapshot() 還原的
+    // 快照是 replayFromHere() 在 GameState.exitReview() **之前**拍的，isReviewing 為
+    // true，而 saveGame() 開頭就有 `if (state.isReviewing) return;`，補上去會是靜默 no-op。
+    const saved = readSavedGame(sharedStorage);
+    expect(saved.moveHistory).toHaveLength(4);
+    // 存檔不得帶著覆盤狀態：loadGame() 沒有重建覆盤 UI 的路徑，還原成 isReviewing=true
+    // 會變成「盤面停在覆盤游標、卻沒有任何覆盤控制項」的死狀態。
+    expect(saved.isReviewing).toBe(false);
+
+    // 跨文件重新載入：真的回到原譜。
+    const reloaded = sandboxWithMainLifecycle({ sharedStorage, hash: '#play' });
+    expect(reloaded.GameState.getState().moveHistory).toHaveLength(4);
+    expect(reloaded.GameState.getState().isReviewing).toBe(false);
+  });
 });
