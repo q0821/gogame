@@ -426,6 +426,40 @@ function createMainLifecycleElement(id = '') {
 }
 
 /**
+ * Returns a sandbox with 真實 ui.js 載入，供渲染層（純 DOM 的 8 個 export）單元測試。
+ *
+ * ui.js 模組層級沒有任何 canvas 副作用，5 個 import 也都只 export 函式，所以
+ * require 本身完全不需要 canvas；只要不呼叫 drawBoard/drawStone/resizeCanvas/
+ * drawWinrateGraph 這 4 個需要 2D context 的 export 就不會碰到 canvas。
+ *
+ * 注意：updateHUD/updateReviewInfo/updateScoringDisplay 內有多處
+ * `getElementById(...).textContent =` 是**沒有 null guard** 的，所以這裡的
+ * getElementById 必須永不回傳 null——改以 id 為 key 記憶化建立元素 mock，
+ * 測試再從回傳的 elements 讀取寫入結果。
+ */
+function sandboxWithGoUI() {
+  const elements = {};
+  const getElement = (id) => {
+    if (!elements[id]) elements[id] = createMainLifecycleElement(id);
+    return elements[id];
+  };
+  const document = createMockEventTarget({
+    getElementById: getElement,
+    createElement: (tag) => createMainLifecycleElement(tag),
+    querySelector: () => null,
+    querySelectorAll: () => []
+  });
+  const { ctx, localRequire } = createSandbox({
+    document,
+    devicePixelRatio: 1,
+    matchMedia: () => ({ matches: false })
+  });
+  loadIntoContext(ctx, localRequire, './rules.js');
+  loadIntoContext(ctx, localRequire, './ui.js');
+  return { ctx, elements, GoUI: ctx.GoUI };
+}
+
+/**
  * 載入真實 main.js 與 GameState，僅替換引擎、音訊、商店與其他棋類等外部邊界。
  * 用於驗證圍棋主流程在瀏覽器生命週期中的可觀察狀態與控制項結果。
  *
@@ -517,25 +551,6 @@ function sandboxWithMainLifecycle({
   // 判斷輸入相同），否則斷言會恆真、失去鑑別力。
   const hudUpdates = [];
   const moduleMocks = {
-    './ui.js': {
-      GoUI: {
-        drawBoard: noop,
-        updateHUD: (state) => {
-          hudUpdates.push({
-            currentPlayer: state.currentPlayer,
-            gameOver: !!state.gameOver,
-            isAIThinking: !!state.isAIThinking,
-            moveCount: state.moveHistory.length
-          });
-        },
-        setStatus: noop,
-        syncStatus: noop,
-        updateScoringDisplay: noop,
-        updateReviewInfo: noop,
-        updateReviewAnalysisInfo: noop,
-        drawWinrateGraph: noop
-      }
-    },
     './sound.js': { GoSound: {} },
     './hints.js': { GoHints: { getCaptureHints: () => [] } },
     './sgf-export.js': { shareOrDownloadSgf: async () => 'downloaded' },
@@ -623,9 +638,36 @@ function sandboxWithMainLifecycle({
       timeouts.delete(id);
     }
   }, moduleMocks);
+
+  // 載入**真實** ui.js，只就地覆寫兩個需要 canvas 2D context 的繪圖函式。
+  // ui.js 的 12 個 export 中，8 個是純 DOM 操作、與繪圖那群幾乎零耦合（唯一共用的
+  // 只有 rules.js 的 BLACK/WHITE 常數），模組層級也沒有任何 canvas 副作用，所以
+  // require 本身不需要 canvas。過去這裡把整組 ui.js 換成 noop，導致 #mobileTurn
+  // 徽章、狀態列、提子數這些渲染邏輯零覆蓋（終局徽章顯示錯誤的一方就是這樣漏到
+  // 瀏覽器 smoke 才被抓到）。drawBoard/drawWinrateGraph 繼續交給瀏覽器 smoke——
+  // 對它們能寫的單元斷言只有繪圖指令清單，等於把實作重講一遍，改個 padding 就整批紅燈。
+  const realUI = localRequire('./ui.js');
+  // 就地 mutate，不重新指派 realUI.GoUI（不依賴 Babel 的 live-binding 語意）。
+  realUI.GoUI.drawBoard = noop;
+  realUI.GoUI.drawWinrateGraph = noop;
+  // updateHUD 是「包一層」而非換掉：既有測試斷言的 hudUpdates 資料流記錄器要留著，
+  // 同時讓真實的 updateHUD 真的把文字寫進 DOM mock，兩種斷言得以並存。
+  // 注意：updateHUD() 收到的是 GameState 的活物件，留存參照之後會讀到「當下」而非
+  // 「呼叫當時」的值，因此在呼叫點就抄下決定徽章內容的欄位，否則斷言會恆真、失去鑑別力。
+  const realUpdateHUD = realUI.GoUI.updateHUD;
+  realUI.GoUI.updateHUD = (state) => {
+    hudUpdates.push({
+      currentPlayer: state.currentPlayer,
+      gameOver: !!state.gameOver,
+      isAIThinking: !!state.isAIThinking,
+      moveCount: state.moveHistory.length
+    });
+    realUpdateHUD(state);
+  };
+
   loadIntoContext(ctx, localRequire, './main.js');
   const gameState = localRequire('./game-state.js');
   return { ctx, GameState: gameState, elements, localStorage, confirm, clock, requestAIMove, hudUpdates };
 }
 
-module.exports = { sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };
+module.exports = { sandboxWithGoUI, sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };

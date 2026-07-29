@@ -540,6 +540,63 @@ describe('圍棋主流程狀態生命週期', () => {
     });
   });
 
+  // ——— 資訊列 DOM 實際內容（真實 ui.js 渲染層，端到端）———
+  // 上面幾個測試斷言的是「main.js 送進 UI 層的資料」，攔在 updateHUD() 的入口。
+  // 以下改斷言「真實 ui.js 寫進 DOM 之後的文字」，補上渲染層本身的覆蓋——
+  // 終局徽章顯示錯誤的一方，正是先前只靠瀏覽器 smoke 才抓到的缺陷類型。
+  test('終局後 #mobileTurn 顯示「遊戲結束」而非某一方的回合', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.ctx.doPass(); // 黑虛手
+    sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目
+    sandbox.ctx.confirmScoring();
+
+    // 防斷言落空：確認真的走到終局，否則下面的徽章斷言只是在測初始值。
+    expect(sandbox.GameState.getState().gameOver).toBe(true);
+    expect(sandbox.elements.mobileTurn.textContent).toBe('遊戲結束');
+    expect(sandbox.elements.mobileTurn.className).toBe('turn-badge');
+  });
+
+  test('數目期間 #mobileTurn 仍顯示當手方，狀態列改顯示數目提示', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    sandbox.ctx.doPass(); // 黑虛手 → 輪白
+    sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目，換手回黑
+
+    expect(sandbox.GameState.getState().isScoring).toBe(true);
+    // updateHUD() 沒有 isScoring 分支：徽章照常顯示當手方，數目的提示走狀態列。
+    expect(sandbox.elements.mobileTurn.textContent).toBe('黑方');
+    expect(sandbox.elements.mobileTurn.className).toBe('turn-badge black');
+    // 進入數目先同步寫下「AI 數目中…」，待 KataGo 死子估算的 promise 回來才改寫成
+    // 「已自動估算死子…」。此處是同步時點，斷言的就是前者（getStatusMessage 的
+    // isScoring 分支另在 tests/ui.test.js 直接覆蓋）。
+    expect(sandbox.elements.mobileStatus.textContent).toBe('AI 數目中…');
+  });
+
+  test('一般對局時提子數與手數的 DOM 文字與 GameState 一致', () => {
+    const sandbox = sandboxWithMainLifecycle({});
+    sandbox.ctx.document.getElementById('gameMode').value = 'pvp';
+    sandbox.ctx.startNewGame();
+    // 白在 (0,1)(1,0) 圍住黑 (0,0)，第 4 手提掉一子。
+    sandbox.GameState.applyMove(0, 0); // 黑
+    sandbox.GameState.applyMove(0, 1); // 白
+    sandbox.GameState.applyMove(5, 5); // 黑
+    sandbox.ctx.doPass();              // 白虛手，讓 main.js 走一次 updateUI()
+
+    const state = sandbox.GameState.getState();
+    expect({
+      cap: sandbox.elements.mobileBlackCap.textContent,
+      moves: sandbox.elements.mobileMoveCount.textContent,
+      turn: sandbox.elements.mobileTurn.textContent
+    }).toEqual({
+      cap: state.captures[1],
+      moves: state.moveHistory.length,
+      turn: '黑方'
+    });
+  });
+
   // ——— 終局入口的資訊列同步 ———
   // 盤上狀態轉成 gameOver=true 的入口只有 endGame()（GameState.markGameOver() 的唯一呼叫點），
   // 認輸、超時、確認數目三條路徑都收斂到它；loadGame() 與 doUndo() 也能還原出 gameOver=true，
