@@ -102,7 +102,6 @@ const app = {
   get captures()          { return getGoState().captures; },
   get moveHistory()       { return getGoState().moveHistory; },
   get koPoint()           { return getGoState().koPoint; },
-  get passCount()         { return getGoState().passCount; },
   get gameOver()          { return getGoState().gameOver; },
   get gameMode()          { return getGoState().gameMode; },
   get playerColor()       { return getGoState().playerColor; },
@@ -772,7 +771,6 @@ async function endGameByScoring() {
     if (ownership) {
       const dead = deadStonesFromOwnership(ownership);
       GameState.setDeadStones(dead);
-      getGoState();
       _lastOwnership = ownership;
     }
   } catch (err) {
@@ -901,7 +899,6 @@ function confirmScoring() {
   const humanMargin = state.playerColor === BLACK ? diff : -diff;
   applyResultToLevel(humanMargin);
   GameState.confirmScoring();
-  getGoState();
   document.getElementById('scoringPanel').style.display = 'none';
   const winnerColor = diff > 0 ? BLACK : diff < 0 ? WHITE : null;
   endGame(`${winner}勝`, detail, outcomeFor(winnerColor));
@@ -1052,7 +1049,6 @@ function enterReview() {
   if (!document.getElementById('reviewToggle').checked) return;
   const result = GameState.enterReview();
   if (!result.ok) return;
-  getGoState();
   document.getElementById('reviewBar').style.display = 'block';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'block';
@@ -1073,7 +1069,6 @@ function exitReview() {
 function reviewGo(n) {
   const result = GameState.reviewGo(n);
   if (!result.ok) return;
-  getGoState();
   updateReviewInfo();
   drawBoard();
 }
@@ -1198,7 +1193,6 @@ function replayFromHere() {
   const sideToMove = (cut % 2 === 0) ? BLACK : WHITE;
 
   GameState.exitReview();
-  getGoState();
   GameState.startGame({
     size: original.size,
     gameMode: 'pvc',
@@ -1209,12 +1203,9 @@ function replayFromHere() {
     gameRules: original.gameRules,
     komi: original.komi,
   });
-  getGoState();
   for (const m of movesToReplay) {
-    getGoState();
     if (m.pass) GameState.applyPass();
     else GameState.applyMove(m.x, m.y);
-    getGoState();
   }
   const replayState = getGoState();
 

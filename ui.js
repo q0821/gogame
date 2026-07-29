@@ -167,21 +167,6 @@ export function updateHUD(state) {
     isAIThinking: !!state.isAIThinking && state.currentPlayer !== BLACK
   };
 
-  // 桌機資訊面板已併入單欄資訊列；保留 null guard 以防元素不存在（圍棋新版只用 mobile* 系列 ID）
-  const turnEl = document.getElementById('turnDisplay');
-  if (turnEl) {
-    if (normalizedState.gameOver) {
-      turnEl.textContent = '遊戲結束';
-      turnEl.className = 'current-turn';
-    } else if (normalizedState.isAIThinking) {
-      turnEl.textContent = 'AI 思考中...';
-      turnEl.className = 'current-turn';
-    } else {
-      turnEl.textContent = normalizedState.currentPlayer === BLACK ? '黑方回合' : '白方回合';
-      turnEl.className = 'current-turn ' + (normalizedState.currentPlayer === BLACK ? 'black' : 'white');
-    }
-  }
-
   const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setText('blackCaptures', normalizedState.captures[BLACK]);
   setText('whiteCaptures', normalizedState.captures[WHITE]);
