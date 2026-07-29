@@ -187,19 +187,22 @@ Final reviewer 已獨立查證：
 ### 第三級，殘餘 minor
 
 5. ~~死碼群集~~ 已於 `ff1e3ea` 完成：`main.js` 8 處未使用回傳值的 `getGoState()`、`main.js` 的 `get passCount()`、`ui.js` 的 `turnDisplay` 分支皆已刪除。Reviewer 獨立驗證的理由比原本更強：`game-state.js` 的 `state` 是模組私有、不在任何 export，`ensureState()` 是冪等 lazy init，因此刪除裸呼叫在任何位置都安全。
-6. `tests/helpers.js:585-601` 的 `useRealTimer` 旗標同時控制真 timer 模組與假 `setTimeout`，後續加測試漏帶會讓 `aiCalls: 0` 這類斷言空洞通過。建議拆成 `useRealTimer` 與 `useFakeScheduler` 兩個。目前無實例受害。
-7. `ui.js` 渲染層零自動化覆蓋（state → DOM 文字／class）。要根治需能載入真實 `ui.js`，受阻於 `drawBoard()` 需要真實 canvas context。這是本次唯一漏網 Important 的結構性成因。
-8. 「計時局 → 計時局」路徑套件內無測試，只以一次性探針驗證過。
+6. ~~`useRealTimer` 旗標的雙重職責~~ 已於 `eaf0e0d` 處理。**沒有**照原本設想拆成兩個旗標（拆完漏帶新旗標的後果一模一樣），改為假 scheduler 恆常安裝，旗標語意收窄為「只決定要不要載入真實 `timer.js`」。刻意不改名：14 個呼叫點用解構預設值 `= false`，改名會讓舊名被靜默忽略，正是要根治的失效類型。附帶修好 jest 平行執行的 worker 計時器洩漏警告。更正一項當初的宣稱：那種空洞斷言在本 repo 從未實際存在（base 與 HEAD 稽核皆為 0 條），改動的實證效益是消除 worker 洩漏與防止未來發生。
+7. ~~`ui.js` 渲染層零自動化覆蓋~~ 已於 `e3a9de2` 完成。spike 推翻了原本的假設：這個專案的測試是 `testEnvironment: 'node'` + `vm.createContext()` 自建 realm，**從頭到尾沒有 jsdom**，所以擋路的不是 canvas 而是 helpers 把 `ui.js` 整組 mock 掉的決定。採路線 C：`localRequire('./ui.js')` 載入真實模組，就地覆寫 `drawBoard`／`drawWinrateGraph`（那兩條繼續交給瀏覽器 smoke），零新增依賴、既有測試零修改。12 個 export 中 10 個現在是真的。
+8. ~~「計時局 → 計時局」路徑無測試~~ 已於 `501d768` 補上。注意它與既有的「計時 → 不計時」測試互補、不可合併：這條路徑對 `stopTimer()` 排序 bug 免疫（被 `GoTimer.init` 的整份覆寫遮蔽），真正守住那個 bug 的是「計時 → 不計時」那條。
 9. 虛手按鈕與 `requestAIMove()` 都缺手番／`isScoring` 守門。建議整批補在使用者入口 `doPassAndSave`，不要只補一處。
 10. `returnToOriginal()` 未 `saveGame()`，返回原譜後 reload 會回到練習分支。已比對 `main` 分支確認為既有行為。
 11. `updateHUD()` 的 `isAIThinking && currentPlayer !== BLACK` normalization 使人類執白時「AI 思考中」徽章永不顯示。既有行為。
 12. ~~`doUndo()` 排程觸發條件的註解敘述錯誤~~ 已於 `a1196b2` 修正。真正的觸發條件是「盤上只有 AI 開局那一手時悔棋」與「從已卡在 AI 手番的狀態恢復」，不是原本寫的「悔兩手後回到輪 AI」（悔兩手其實保留手番）。
 13. `cancelScoring()` 的 AI 排程不具冪等性，連呼叫兩次會排兩次。有 `isAIThinking` lock 兜底，面板已隱藏，實務不可達。
-14. `ui.js` 的 `setText('blackCaptures')`／`setText('whiteCaptures')`／`setText('moveCount')` 三行與已刪的 `turnDisplay` 同屬已退役桌機面板的死碼，三個 id 在全部 HTML 都不存在。清理批次因「不動未點名程式碼」而刻意保留。
-15. `style.css:338-397` 的 `.current-turn` 系列規則在 `turnDisplay` 分支刪除後成為完全孤兒，該 class 不出現在任何 HTML。
-16. `GameState.setAiLevel()` 本身不夾值，AI 等級的範圍不變式完全靠呼叫端維持。日後新增呼叫端需自行確保範圍。
+14. ~~`ui.js` 的三行 `setText` 死碼~~ 已於 `ee6db06` 刪除，連帶移除只被那三行使用的 `setText` 輔助函式。
+15. ~~`style.css` 的 `.current-turn` 孤兒規則~~ 已於 `ee6db06` 刪除。其中 3 條 `::before` 是與仍在使用的 `.turn-badge` 共用的選擇器串，只拆掉 `.current-turn` 那半；reviewer 用腳本逐字元比對確認 7 個 `.turn-badge` 規則的選擇器與宣告區塊在前後兩版完全相同。
+16. ~~`GameState.setAiLevel()` 不夾值~~ 已於 `3628b7d` 補上，範圍從 `adaptive-difficulty.js` 讀 `MIN_LEVEL`／`MAX_LEVEL`，非寫死數字。
 17. `_timerOnTimeout()` 沒有 `isGameBusy()` 守門，而 `ai-controller.js` 的 `app.placeStone()` 之前也沒有 `gameOver` 檢查（守門在落子之後）。理論上 AI 思考中超時，AI 那一手仍可能落在 `gameOver` 之後。既有行為，未加劇。
-18. `regression_notes_status_sync.txt` 仍提到已刪除的 `turnDisplay`，是舊除錯筆記非程式碼，日後 grep 可能誤導。
+18. ~~`regression_notes_status_sync.txt` 提到已刪除的 `turnDisplay`~~ 已於 `ee6db06` 處理。決定保留檔案不刪、也不改寫有時間戳的內文（改寫等於偽造記錄），只在檔首加 4 行過期說明，讓日後 grep 命中時第一行就自我解釋。Reviewer 逐句驗證過那 4 行說明皆正確。
+19. `aiLevel` 仍有兩條繞過 `setAiLevel()` 的直寫路徑：`game-state.js` 的 `createInitialState()` 與 `restoreSnapshot()` 都是 `snapshot.aiLevel || 10`，未夾值。損毀的 localStorage 仍可塞進超範圍值。不阻擋（`levelConfig()` 與 `nextLevelForMode()` 內部各自夾過範圍，AI 實際強度不受影響）。
+20. `#statusMsg` 這個元素在任何 HTML 都不存在，`setStatus()` 對它的寫入永遠走 null guard。未來可考慮連同 guard 一起清掉。
+21. 測試 DOM mock 的效力界線：`getElementById` 永不回傳 null、`textContent` 不做字串轉型。所以「元素被刪掉」這類 regression 測不到，該防線仍在瀏覽器 smoke；`moves: 7` 這類斷言是 mock 形狀，換到真實 DOM 需要 `String()`。
 
 ## 全域限制
 
