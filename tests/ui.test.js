@@ -46,15 +46,18 @@ describe('ui.js 渲染層（純 DOM 的 8 個 export）', () => {
       }).toEqual({ text: 'AI 思考中', cls: 'turn-badge' });
     });
 
-    test('AI 思考中但輪黑時顯示「黑方」（isAIThinking 被 normalize 掉）', () => {
-      // updateHUD 內的 `!!isAIThinking && currentPlayer !== BLACK` 是現行真實規則：
-      // 人類執黑時即使 isAIThinking 殘留為真，徽章仍顯示黑方。此處只凍結行為、不改行為。
+    test('AI 思考中且輪黑時（人類執白）同樣顯示「AI 思考中」', () => {
+      // 舊實作在 updateHUD 內做 `!!isAIThinking && currentPlayer !== BLACK` 的
+      // normalization，硬編碼「AI 一定執白」。人類執白時 AI 執黑，AI 思考時
+      // currentPlayer === BLACK，徽章會退回顯示「黑方」，而同一畫面的狀態列
+      // （getStatusMessage 用未 normalize 的 isAIThinking）卻顯示「AI 思考中...」，
+      // 兩者自相矛盾。徽章一律直接反映 isAIThinking。
       const { GoUI, elements } = sandboxWithGoUI();
       GoUI.updateHUD(hudState({ isAIThinking: true, currentPlayer: BLACK }));
       expect({
         text: elements.mobileTurn.textContent,
         cls: elements.mobileTurn.className
-      }).toEqual({ text: '黑方', cls: 'turn-badge black' });
+      }).toEqual({ text: 'AI 思考中', cls: 'turn-badge' });
     });
 
     test('一般對局依 currentPlayer 顯示黑方／白方並帶對應 class', () => {

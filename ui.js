@@ -161,22 +161,23 @@ export function showBoardToast(container, msg) {
   _boardToastTimers.set(container, t);
 }
 
+// 徽章直接反映 state.isAIThinking，不做任何 normalization。
+// 舊實作是 `!!state.isAIThinking && state.currentPlayer !== BLACK`，等於硬編碼
+// 「AI 一定執白」：人類執白時 AI 執黑，AI 思考中的 currentPlayer 是 BLACK，條件變 false，
+// 徽章顯示「黑方」；而同一畫面的狀態列走 getStatusMessage()，讀的是未 normalize 的
+// isAIThinking，老實顯示「AI 思考中...」——同一時刻兩處互相矛盾。
+// PvP 從不寫入 isAIThinking（只有 ai-controller 與 loadGame 會動它），故毋需額外的模式判斷。
 export function updateHUD(state) {
-  const normalizedState = {
-    ...state,
-    isAIThinking: !!state.isAIThinking && state.currentPlayer !== BLACK
-  };
-
   const mt = document.getElementById('mobileTurn');
-  if (normalizedState.gameOver) {
+  if (state.gameOver) {
     mt.textContent = '遊戲結束';
     mt.className = 'turn-badge';
-  } else if (normalizedState.isAIThinking) {
+  } else if (state.isAIThinking) {
     mt.textContent = 'AI 思考中';
     mt.className = 'turn-badge';
   } else {
-    mt.textContent = normalizedState.currentPlayer === BLACK ? '黑方' : '白方';
-    mt.className = 'turn-badge ' + (normalizedState.currentPlayer === BLACK ? 'black' : 'white');
+    mt.textContent = state.currentPlayer === BLACK ? '黑方' : '白方';
+    mt.className = 'turn-badge ' + (state.currentPlayer === BLACK ? 'black' : 'white');
   }
 
   document.getElementById('mobileBlackCap').textContent = state.captures[BLACK];
