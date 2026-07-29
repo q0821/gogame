@@ -140,3 +140,100 @@ describe('requestAIMove 正常路徑：watchdog 不誤觸發', () => {
     expect(mockKataGo.ensureReady).not.toHaveBeenCalled();
   });
 });
+
+// ——— 非同步邊界回來後重新確認對局仍在進行 ———
+// problem class：requestAIMove() 在 `await katagoMove()` 期間，對局可能已被別人推進或換掉
+// （計時超時判負、使用者按「開始新遊戲」）。求手回來時若不重新確認，那一手會落在「已經不是
+// 當初送出這次求手」的對局上。守門必須在 app.placeStone()／app.doPass() 之前，不能倚賴
+// 呼叫端自己擋（main.js 的 placeStone() 雖有 isGameBlocked() 擋 gameOver，但擋不住「已換成
+// 另一局」，而且把不變式放在被呼叫端等於每個新呼叫端都要重新踩一次雷）。
+describe('requestAIMove 的非同步邊界守門', () => {
+  /** 造一個可由測試控制 resolve 時機的 genmoveCandidates。 */
+  function deferredKataGo() {
+    let release;
+    const pending = new Promise((resolve) => { release = resolve; });
+    return {
+      mock: {
+        ensureReady: () => Promise.resolve(),
+        genmoveCandidates: () => pending,
+        reset: jest.fn()
+      },
+      release: (cands) => release(cands)
+    };
+  }
+
+  function emptyBoard(size = 9) {
+    return Array.from({ length: size }, () => new Array(size).fill(0));
+  }
+
+  test('求手期間對局結束（計時超時判負）→ 回來後不落子', async () => {
+    const { mock, release } = deferredKataGo();
+    const ctx = sandboxWithAiController(mock);
+    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const controller = ctx.makeAiController(app);
+
+    const movePromise = controller.requestAIMove();
+    await tick(5);
+    expect(app.isAIThinking).toBe(true);
+
+    // 求手還吊在半空時計時器超時：_timerOnTimeout() → endGame() → markGameOver()。
+    state.gameOver = true;
+    state.isAIThinking = false;   // markGameOver() 同時解除 lock
+    release([{ x: 3, y: 4, pointsLost: 0, order: 0 }]);
+    await movePromise;
+
+    expect({ placed: calls.placeStone, passes: calls.doPassCount })
+      .toEqual({ placed: [], passes: 0 });
+  }, 10000);
+
+  test('求手期間使用者開新局 → 那一手不會落到新局上', async () => {
+    const { mock, release } = deferredKataGo();
+    const ctx = sandboxWithAiController(mock);
+    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const controller = ctx.makeAiController(app);
+
+    const movePromise = controller.requestAIMove();
+    await tick(5);
+
+    // 「開始新遊戲」不受 isGameBusy() 守門，AI 思考中也按得下去。GameState.startGame()
+    // 會建立全新狀態：board 換成另一個物件、棋譜歸零、lock 也清掉。
+    state.board = emptyBoard();
+    state.moveHistory = [];
+    state.isAIThinking = false;
+    release([{ x: 3, y: 4, pointsLost: 0, order: 0 }]);
+    await movePromise;
+
+    expect(calls.placeStone).toEqual([]);
+  }, 10000);
+
+  test('求手期間對局結束 → 回來後即使該虛手也不虛手', async () => {
+    const { mock, release } = deferredKataGo();
+    const ctx = sandboxWithAiController(mock);
+    const { app, state, calls } = makeApp({ board: emptyBoard() });
+    const controller = ctx.makeAiController(app);
+
+    const movePromise = controller.requestAIMove();
+    await tick(5);
+
+    state.gameOver = true;
+    state.isAIThinking = false;
+    release([]);            // 無候選手 → katagoMove() 回傳 { pass: true }
+    await movePromise;
+
+    expect(calls.doPassCount).toBe(0);
+  }, 10000);
+
+  test('對局未變動時照常落子（守門不誤擋正常路徑）', async () => {
+    const { mock, release } = deferredKataGo();
+    const ctx = sandboxWithAiController(mock);
+    const { app, calls } = makeApp({ board: emptyBoard() });
+    const controller = ctx.makeAiController(app);
+
+    const movePromise = controller.requestAIMove();
+    await tick(5);
+    release([{ x: 3, y: 4, pointsLost: 0, order: 0 }]);
+    await movePromise;
+
+    expect(calls.placeStone).toEqual([[3, 4]]);
+  }, 10000);
+});

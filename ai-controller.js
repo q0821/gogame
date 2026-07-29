@@ -5,6 +5,7 @@
 // WebGPU → WASM → CPU 後端 fallback，毋需另一套引擎兜底。
 import * as KataGo from './katago-service.js';
 import { levelConfig, pickMove } from './adaptive-difficulty.js';
+import { isAnalysisRequestCurrent } from './position-estimate.js';
 
 export function makeAiController(app) {
   // 用 KataGo 求一手，依自適應等級做隨機弱化。回傳 {x,y}|{pass:true}。
@@ -64,6 +65,16 @@ export function makeAiController(app) {
     app.syncStatus();
     app.updateUI();
 
+    // 送出求手前先記下「這一手是為哪一個局面算的」。求手期間對局可能已被別人推進或整個換掉
+    // （計時超時判負 → endGame()；使用者按「開始新遊戲」→ GameState.startGame() 建立全新
+    // 狀態，這條路徑不受 isGameBusy() 守門），回來時必須重新確認才准落子。
+    // 沿用 position-estimate.js 既有的 isAnalysisRequestCurrent()（形勢判斷／建議走法也是
+    // 同一個問題類型），不另造第二套機制；board 走物件識別比對，GameState 每次落子／悔棋／
+    // 開新局／還原都會換掉 board 物件，識別不同即代表「已經不是當初那一局」。
+    const requestBoard = app.board;
+    const requestMoveCount = app.moveHistory.length;
+    const requestPlayer = app.currentPlayer;
+
     try {
       // 給人類般的停頓（1–3s），引擎自身運算時間計入其中，避免瞬間落子。
       const thinkStart = Date.now();
@@ -97,6 +108,10 @@ export function makeAiController(app) {
 
       app.setAIThinking(false);
       app.updateUI();
+
+      // 守門必須在落子／虛手「之前」。原本只有落子之後的 `if (!app.gameOver ...)`，
+      // 對「這一手該不該落」毫無作用。
+      if (!isAnalysisRequestCurrent(app, requestBoard, requestMoveCount, requestPlayer)) return;
 
       if (move && !move.pass) app.placeStone(move.x, move.y);
       else app.doPass();
