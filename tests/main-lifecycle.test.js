@@ -780,9 +780,14 @@ describe('圍棋主流程狀態生命週期', () => {
     expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 179, 2: 180 });
     expect(sandbox.elements.blackTimer.textContent).toBe('02:59');
 
-    // 上一局的 interval 若沒被 GoTimer.stop() 清掉，這裡會多跑一輪 tick。
-    // wall-clock 計時本身是冪等的（剩餘由時間戳回推，不是每 tick 減一），
-    // 所以不推進時間再 tick 一次，秒數必須完全不動——會動就代表有人在重複扣秒。
+    // 釘住 wall-clock 的冪等性：剩餘秒數由「這手起始時間戳 + 起始剩餘」回推，
+    // 不是每 tick 減一。所以不推進時間、連 tick 兩次，秒數必須完全不動；
+    // 會動就代表有人改回了「把 tick 次數當時間來源」的算法（＝重複扣秒）。
+    //
+    // 注意這條**守不住 interval 清理**：正因為算式冪等，上一局殘留的 interval 多跑
+    // 幾輪也會算出同樣的數字。實測拿掉 GoTimer.stop() 的 clearInterval 後本測試照樣全綠，
+    // 變紅的是 tests/timer.test.js 的「時間到觸發 onTimeout、定格 0、停鐘」——
+    // interval 清理由那條守，兩者分工不同，別把本測試當成它的替代品。
     sandbox.clock.tick();
     sandbox.clock.tick();
     expect(sandbox.GameState.getState().timerSeconds).toEqual({ 1: 179, 2: 180 });

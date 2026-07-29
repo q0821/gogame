@@ -173,12 +173,14 @@ describe('ui.js 渲染層（純 DOM 的 8 個 export）', () => {
       GoUI.updateScoringDisplay({ gameRules: 'chinese', komi: 7.5 }, score);
       expect({
         blackLabel: elements.blackScoreLabel.textContent,
+        whiteLabel: elements.whiteScoreLabel.textContent,
         blackDetail: elements.blackDetail.textContent,
         whiteDetail: elements.whiteDetail.textContent,
         blackScore: elements.blackScore.textContent,
         whiteScore: elements.whiteScore.textContent
       }).toEqual({
         blackLabel: '　棋子+目',
+        whiteLabel: '　棋子+目（含貼目）',
         blackDetail: '20 + 20',
         whiteDetail: '10 + 15 + 7.5',
         blackScore: '40.0',
