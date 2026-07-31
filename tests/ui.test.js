@@ -256,7 +256,7 @@ describe('ui.js 渲染層（純 DOM 的 8 個 export）', () => {
       expect(elements.reviewAnalysisInfo.textContent).toBe('本局開始 — 黑勝率 50%');
     });
 
-    test('黑方大失分的手會標記為疑問手並附勝率損失', () => {
+    test('黑方大失分的手會標記為疑問手並附勝率損失，句子明確標出失分主語與黑勝率去向', () => {
       const { GoUI, elements } = sandboxWithGoUI();
       GoUI.updateReviewAnalysisInfo(hudState({
         moveHistory,
@@ -267,9 +267,67 @@ describe('ui.js 渲染層（純 DOM 的 8 個 export）', () => {
         text: elements.reviewAnalysisInfo.textContent,
         cls: elements.reviewAnalysisInfo.className
       }).toEqual({
-        text: '第 1 手（黑）— 黑勝率 40%；這手約失 20% 勝率（≈ 5.0 目，估計） · 疑問手',
+        text: '第 1 手（黑）— 黑這手約失 20% 勝率（≈ 5.0 目，估計），黑勝率降至 40% · 疑問手',
         cls: 'move-info bad'
       });
+    });
+
+    // 白方視角：wrLoss = after.wr - before.wr（黑 wr 上升＝白方丟分）。
+    // 舊測試只涵蓋 move.player === BLACK 這一支，白方公式完全沒被測到，
+    // 這正是「黑勝率、失分」混寫在同一句卻沒被抓出來的根因之一。
+    test('白方大失分的手會標記為疑問手，句中「這手約失」的主語是白方，不會誤讀成黑方', () => {
+      const { GoUI, elements } = sandboxWithGoUI();
+      GoUI.updateReviewAnalysisInfo(hudState({
+        moveHistory: [{ x: 2, y: 3, player: WHITE }],
+        currentReviewMove: 1,
+        analysis: [{ wr: 0.40, lead: -5 }, { wr: 0.60, lead: 0 }]
+      }));
+      expect({
+        text: elements.reviewAnalysisInfo.textContent,
+        cls: elements.reviewAnalysisInfo.className
+      }).toEqual({
+        text: '第 1 手（白）— 白這手約失 20% 勝率（≈ 5.0 目，估計），黑勝率升至 60% · 疑問手',
+        cls: 'move-info bad'
+      });
+    });
+
+    // 重現使用者截圖的實際場景（第 14 手白、第 15 手黑），驗證兩句話彼此自洽：
+    // 第 14 手句尾「黑勝率升至 80%」與第 15 手內部的起點（before.wr=0.80）一致，
+    // 使用者不會再誤以為「80% 之後失 52%」等於下一手的黑勝率。
+    // m 是「第 m 手」的實際手數，moveHistory[m-1] 與 analysis[m-1]/analysis[m]
+    // 都要對到真正的第 14、15 手索引，不能用小索引偷懶湊數。
+    test('連續兩手（白後黑）的文案彼此自洽，不會讓人把失分誤算進下一手的黑勝率', () => {
+      const { GoUI, elements } = sandboxWithGoUI();
+
+      const fullMoveHistory = new Array(15);
+      fullMoveHistory[13] = { x: 2, y: 3, player: WHITE }; // 第 14 手
+      fullMoveHistory[14] = { x: 3, y: 3, player: BLACK }; // 第 15 手
+
+      const fullAnalysis = new Array(16);
+      fullAnalysis[13] = { wr: 0.28, lead: 2.0 };  // 第 14 手之前
+      fullAnalysis[14] = { wr: 0.80, lead: 11.6 }; // 第 14 手之後／第 15 手之前
+      fullAnalysis[15] = { wr: 0.57, lead: 7.6 };  // 第 15 手之後
+
+      GoUI.updateReviewAnalysisInfo(hudState({
+        moveHistory: fullMoveHistory,
+        currentReviewMove: 14,
+        analysis: fullAnalysis
+      }));
+      const move14Text = elements.reviewAnalysisInfo.textContent;
+      expect(move14Text).toBe('第 14 手（白）— 白這手約失 52% 勝率（≈ 9.6 目，估計），黑勝率升至 80% · 疑問手');
+
+      GoUI.updateReviewAnalysisInfo(hudState({
+        moveHistory: fullMoveHistory,
+        currentReviewMove: 15,
+        analysis: fullAnalysis
+      }));
+      const move15Text = elements.reviewAnalysisInfo.textContent;
+      expect(move15Text).toBe('第 15 手（黑）— 黑這手約失 23% 勝率（≈ 4.0 目，估計），黑勝率降至 57% · 疑問手');
+
+      // 兩句自洽的關鍵：第 14 手句尾的黑勝率（80%）＝ 第 15 手起算的基準，
+      // 不會出現使用者原本誤讀的「80 − 52 = 28%」這種算法。
+      expect(move14Text).toContain('黑勝率升至 80%');
+      expect(move15Text).not.toContain('28%');
     });
   });
 });

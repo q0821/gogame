@@ -603,11 +603,16 @@ export function updateReviewAnalysisInfo(state) {
   const leadLoss = isBlack ? before.lead - after.lead : after.lead - before.lead;
   const who = isBlack ? '黑' : '白';
   const { tag, cls } = _classifyLoss(wrLoss);
-  let txt = `第 ${m} 手（${who}）— 黑勝率 ${_pct(after.wr)}`;
+  // 失分一律明講主語（該手棋方），並用「黑勝率降至／升至」表達，
+  // 避免「黑勝率 N%」和緊接的「失 M%」被誤讀成同一視角（見 fix/go-review-winrate）。
+  let txt = `第 ${m} 手（${who}）— `;
   if (wrLoss > 0.005) {
-    txt += `；這手約失 ${(wrLoss * 100).toFixed(0)}% 勝率`;
+    txt += `${who}這手約失 ${(wrLoss * 100).toFixed(0)}% 勝率`;
     if (leadLoss > 0.5) txt += `（≈ ${leadLoss.toFixed(1)} 目，估計）`;
+    txt += `，黑勝率${isBlack ? '降至' : '升至'} ${_pct(after.wr)}`;
     if (tag) txt += ` · ${tag}`;
+  } else {
+    txt += `黑勝率 ${_pct(after.wr)}`;
   }
   el.textContent = txt;
   el.className = 'move-info ' + cls;
