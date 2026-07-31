@@ -45,6 +45,23 @@ export const NOISE_PRUNING_CAP = 1e50;
 const SQRT_3 = Math.sqrt(3);
 
 /**
+ * 把「黑方視角」的平均效用換算成「root 手番方視角」的 selfUtility。
+ *
+ * 對應上游 cpp/search/searchupdatehelpers.cpp recomputeNodeStats()：
+ *   stats.selfUtility = node.nextPla == P_WHITE ? childUtility : -childUtility;
+ * （上游的 utilityAvg 是白方視角，本 port 的 utilitySum 是黑方視角，故條件相反。）
+ *
+ * 本模組其餘加權函式一律 player-agnostic，翻號只在這裡做，與上游結構一致。
+ *
+ * @param {number} blackUtility 黑方視角的平均效用。
+ * @param {boolean} rootPlayerIsBlack root 手番是否為黑。
+ * @returns {number}
+ */
+export function selfUtilityForRoot(blackUtility, rootPlayerIsBlack) {
+  return rootPlayerIsBlack ? blackUtility : -blackUtility;
+}
+
+/**
  * 自由度 3 的 t 分布 CDF（閉式解）。
  * 上游用 valueWeightDistribution->getCdf(z) 查表，那張表就是自由度 3 的 t 分布。
  * @param {number} z

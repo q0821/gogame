@@ -162,6 +162,17 @@ function sandboxWithStats() {
   return ctx;
 }
 
+/**
+ * Returns a sandbox with KataGo 的 root 加權純函式載入。
+ * rootWeighting.js 是零相依純函式（不碰 DOM、不 import tfjs、無模組層級狀態），
+ * 且刻意寫成純 JavaScript，故可直接被本測試 sandbox 載入。
+ */
+function sandboxWithRootWeighting() {
+  const { ctx, localRequire } = createSandbox();
+  loadIntoContext(ctx, localRequire, './katago-engine/engine/katago/rootWeighting.js');
+  return ctx;
+}
+
 /** Returns a sandbox with GoRules + GoReview loaded. */
 function sandboxWithReview() {
   const { ctx, localRequire } = createSandbox();
@@ -675,4 +686,4 @@ function sandboxWithMainLifecycle({
   return { ctx, GameState: gameState, elements, localStorage, confirm, clock, requestAIMove, hudUpdates, app: appRef.app };
 }
 
-module.exports = { sandboxWithGoUI, sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, createMockLocalStorage };
+module.exports = { sandboxWithGoUI, sandboxWithRules, sandboxWithGameState, sandboxWithHints, sandboxWithTimer, sandboxWithTsumego, sandboxWithTsumegoProgress, sandboxWithStats, sandboxWithReview, sandboxWithAdaptive, sandboxWithAdaptiveChess, sandboxWithGomoku, sandboxWithConnect6, sandboxWithOthello, sandboxWithAudioManager, sandboxWithXiangqiEngine, sandboxWithAiController, sandboxWithSgfExport, sandboxWithPositionEstimate, sandboxWithEntitlements, sandboxWithSgf, sandboxWithCanvasDpr, sandboxWithMainLifecycle, sandboxWithRootWeighting, createMockLocalStorage };

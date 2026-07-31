@@ -32,7 +32,7 @@ import { fillInputsV7Fast, type RecentMove } from './featuresV7Fast';
 import { POLICY_OPTIMISM, ROOT_POLICY_OPTIMISM } from './searchParams';
 // root 加權統計（tDistCdf3 / pruneNoiseWeight / downweightBadChildrenAndNormalizeWeight /
 // computeWeightedRootStats）已抽到獨立模組，供單元測試直接載入。刻意用純 JS，見該檔案開頭註解。
-import { computeWeightedRootStats } from './rootWeighting.js';
+import { computeWeightedRootStats, selfUtilityForRoot } from './rootWeighting.js';
 
 export type OwnershipMode = 'none' | 'root' | 'tree';
 
@@ -2010,7 +2010,7 @@ export class MctsSearch {
       const utility = child.utilitySum / child.visits;
       childStats.push({
         weightAdjusted: child.visits,
-        selfUtility: utility,
+        selfUtility: selfUtilityForRoot(utility, this.currentPlayer === 'black'),
         policy: e.prior,
         value: q,
         scoreLead,
@@ -2502,7 +2502,7 @@ export async function analyzeMcts(args: {
     const utility = child.utilitySum / child.visits;
     childStats.push({
       weightAdjusted: child.visits,
-      selfUtility: utility,
+      selfUtility: selfUtilityForRoot(utility, args.currentPlayer === 'black'),
       policy: e.prior,
       value: q,
       scoreLead,
