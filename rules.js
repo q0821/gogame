@@ -101,7 +101,7 @@ export function boardToString(board) {
   return board.map(row => row.join('')).join('');
 }
 
-export function tryPlaceStone(board, size, x, y, player, currentKo) {
+export function tryPlaceStone(board, size, x, y, player, currentKo, collectCaptured = false) {
   if (board[x][y] !== EMPTY) return { valid: false, reason: 'occupied' };
 
   // 打劫禁著點：先於落子計算檢查（即使該點恰好又是自殺形，仍以「劫」為主要原因回報，
@@ -112,6 +112,8 @@ export function tryPlaceStone(board, size, x, y, player, currentKo) {
   newBoard[x][y] = player;
   let captured = 0;
   let capturedSingle = null;
+  // Only committed moves need coordinates; legality/hint searches avoid this allocation.
+  let capturedStones = null;
   const opp = opponent(player);
 
   for (const [nx, ny] of getNeighbors(size, x, y)) {
@@ -120,6 +122,10 @@ export function tryPlaceStone(board, size, x, y, player, currentKo) {
       if (group.liberties.size === 0) {
         if (group.stones.length === 1) capturedSingle = group.stones[0];
         captured += removeGroup(newBoard, group.stones);
+        if (collectCaptured) {
+          capturedStones ??= [];
+          for (const stone of group.stones) capturedStones.push(stone);
+        }
       }
     }
   }
@@ -132,7 +138,7 @@ export function tryPlaceStone(board, size, x, y, player, currentKo) {
     newKo = capturedSingle;
   }
 
-  return { valid: true, newBoard, captured, newKo };
+  return { valid: true, newBoard, captured, newKo, capturedStones };
 }
 
 export function getLegalMoves(board, size, player, koPoint) {

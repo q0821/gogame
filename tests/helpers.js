@@ -85,6 +85,7 @@ function createSandbox(extraGlobals = {}, moduleMocks = {}) {
     setTimeout, clearTimeout, setInterval, clearInterval,
     Math, Array, Object, Set, Map, JSON, Promise,
     requestAnimationFrame: (fn) => { fn(0); return 0; },
+    cancelAnimationFrame: () => {},
     // Stubs for missing properties
     localRequire: null,
     localModule: null,
@@ -378,6 +379,7 @@ function createMainLifecycleElement(id = '') {
   const el = {
     id,
     style: {},
+    dataset: {},
     children,
     className: '',
     textContent: '',
@@ -425,6 +427,7 @@ function createMainLifecycleElement(id = '') {
     remove() {},
     replaceWith() {},
     setAttribute() {},
+    removeAttribute() {},
     getContext: () => ({}),
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 600, height: 600 }),
     querySelector: () => children.find((child) => child && typeof child === 'object') || null,
@@ -626,7 +629,7 @@ function sandboxWithMainLifecycle({
     location,
     fetch: async () => ({ ok: false }),
     confirm,
-    matchMedia: () => ({ matches: false }),
+    matchMedia: () => createMockEventTarget({ matches: false }),
     addEventListener: windowTarget.addEventListener,
     removeEventListener: windowTarget.removeEventListener,
     dispatchEvent: windowTarget.dispatchEvent,
@@ -637,6 +640,7 @@ function sandboxWithMainLifecycle({
     // 恆常安裝直接消除這個失效模式（空佇列的 no-op 才是唯一剩下的合法情境），
     // 順帶讓 main.js 排的計時器不再洩漏到 jest worker 的 event loop。
     Date: LifecycleDate,
+    performance: { now: () => currentNow },
     setInterval: (callback) => {
       const id = nextIntervalId++;
       intervals.set(id, callback);

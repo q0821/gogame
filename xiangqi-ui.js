@@ -1,13 +1,14 @@
-// xiangqi-ui.js — 象棋盤 canvas 渲染（純畫圖，無狀態）。
+// xiangqi-ui.js — 象棋盤、實體吃子時序與被吃棋子資訊；對局狀態由控制器持有。
 //
 // 棋子畫在「交叉點」上（非格子內），9 直線 x 10 橫線。河界處內側直線斷開，九宮畫斜線。
 // 棋子為實體立體感（徑向漸層凸面 + 投影 + 描邊 + 高光）。
 // view = { grid, selected, legalTargets, lastMove, checkRC, anim }；座標 row 0=上、col 0=左。
-//   anim = { hideRow, hideCol, piece:{char,red}, x, y }：動畫中隱藏某格、改畫浮動棋子於 (x,y)。
-import { COLUMNS, ROWS } from './xiangqi-game.js';
+//   anim 隱藏起點及被吃格，分別畫攻方落定與受擊棋子的離盤效果。
+import { COLUMNS, ROWS, squareToRC, splitMove, capturedPieces } from './xiangqi-game.js';
 import { paintBoardBase, paintWoodGrain, paintVignette } from './board-texture.js';
 import { posHash01, engraveText, paintPieceGrain } from './piece-texture.js';
 import { makeHiDPIOffscreen, hidpiScale } from './canvas-dpr.js';
+import { prefersReducedMotion } from './motion.js';
 
 // 與 style.css --font-serif 同步（canvas 無法吃 CSS 變數，故重複一份系統宋體 stack）
 const SERIF = '"Noto Serif TC","Noto Serif CJK TC","Songti TC","Songti SC","STSong","PMingLiU","MingLiU","SimSun",serif';
@@ -243,6 +244,7 @@ export function drawXiangqi(deps, view) {
       const piece = grid[r][c];
       if (!piece) continue;
       if (view.anim && view.anim.hideRow === r && view.anim.hideCol === c) continue;
+      if (view.anim?.victim && view.anim.toRow === r && view.anim.toCol === c) continue;
       drawPiece(ctx, ix(deps, c), iy(deps, r), radius, piece, false);
     }
   }
@@ -296,9 +298,17 @@ export function drawXiangqi(deps, view) {
     });
   }
 
-  // 浮動（移動中）棋子畫最上層，帶 lifted 陰影
-  if (view.anim && view.anim.piece) {
-    drawPiece(ctx, view.anim.x, view.anim.y, radius, view.anim.piece, true);
+  // 受擊子獨立離盤，不再與進攻子重疊滑動。
+  if (view.anim?.victim) {
+    const a = view.anim;
+    ctx.save();
+    ctx.globalAlpha = a.victimOpacity;
+    drawPiece(ctx, a.victimX, a.victimY, radius * a.victimScale, a.victim, a.victimOpacity < 1);
+    ctx.restore();
+  }
+  if (view.anim?.piece) {
+    const a = view.anim;
+    drawPiece(ctx, a.x, a.y, radius * (a.scale ?? 1), a.piece, a.lifted ?? true);
   }
 }
 
@@ -317,4 +327,115 @@ function drawArrow(ctx, x1, y1, x2, y2, color, width, shrink) {
   ctx.lineTo(ex - head * Math.cos(ang + Math.PI / 6), ey - head * Math.sin(ang + Math.PI / 6));
   ctx.closePath(); ctx.fill();
   ctx.lineCap = 'butt';
+}
+
+/** 兩模式共用的接觸→提子→落定時序；取消會清掉每個 frame/timer。 */
+export function animateXiangqiMove(deps, grid, uci, { onContact, onFinish }) {
+  const { from, to } = splitMove(uci);
+  const source = squareToRC(from), target = squareToRC(to);
+  const piece = grid[source.row]?.[source.col], victim = grid[target.row]?.[target.col];
+  const contactMs = victim ? 180 : 280;
+  const duration = victim ? 420 : 280;
+  let frame = 0, timer = 0, done = false, contacted = false, committed = false;
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  const contact = () => {
+    if (contacted) return;
+    contacted = true;
+    committed = onContact(victim) !== false;
+  };
+  const finish = (complete) => {
+    if (done) return;
+    if (complete) contact();
+    done = true;
+    cancelAnimationFrame(frame);
+    clearTimeout(timer);
+    onFinish(committed);
+    resolve(committed);
+  };
+  const start = performance.now();
+  const step = (now) => {
+    if (done) return;
+    if (prefersReducedMotion() || document.hidden) { finish(true); return; }
+    const elapsed = now - start;
+    if (elapsed >= contactMs) contact();
+    if (contacted && !committed) { finish(false); return; }
+    const cell = deps.cellSize;
+    const x0 = ix(deps, source.col), y0 = iy(deps, source.row);
+    const x1 = ix(deps, target.col), y1 = iy(deps, target.row);
+    const distance = Math.hypot(x1 - x0, y1 - y0) || 1;
+    const ux = (x1 - x0) / distance, uy = (y1 - y0) / distance;
+    const approach = Math.min(1, elapsed / contactMs);
+    const ease = approach < 0.5 ? 2 * approach * approach : 1 - (-2 * approach + 2) ** 2 / 2;
+    const exit = Math.max(0, Math.min(1, (elapsed - contactMs) / 180));
+    const settle = Math.max(0, Math.min(1, (elapsed - contactMs) / 240));
+    // 先在棋緣相接，再讓攻方推入空出的交叉點；只留一次短促回頓。
+    const gap = victim ? cell * 0.66 : 0;
+    const advance = victim ? 1 - (1 - settle) ** 3 : 0;
+    const recoil = victim ? Math.sin(settle * Math.PI) * cell * 0.045 : 0;
+    const anim = {
+      hideRow: source.row, hideCol: source.col, piece,
+      x: x0 + (x1 - ux * gap - x0) * ease + ux * (gap * advance - recoil),
+      y: y0 + (y1 - uy * gap - y0) * ease + uy * (gap * advance - recoil),
+      scale: 1 + Math.sin(settle * Math.PI) * 0.025,
+      lifted: elapsed < contactMs,
+      victim, toRow: target.row, toCol: target.col,
+      victimX: x1 + ux * cell * 0.18 * exit,
+      victimY: y1 + uy * cell * 0.18 * exit - cell * 0.22 * exit,
+      victimScale: 1 - 0.3 * exit,
+      victimOpacity: 1 - exit,
+    };
+    drawXiangqi(deps, { grid, anim, rc: squareToRC });
+    if (elapsed >= duration) finish(true);
+    else frame = requestAnimationFrame(step);
+  };
+  if (!piece || prefersReducedMotion() || document.hidden) finish(true);
+  else {
+    frame = requestAnimationFrame(step);
+    timer = setTimeout(() => finish(true), duration + 120);
+  }
+  return { promise, cancel: () => finish(false) };
+}
+
+/** 被吃棋子為唯讀文字，不暗示可點擊或可打入。 */
+export function renderCapturedPieces(container, fen, initialFen) {
+  const pieces = capturedPieces(fen, initialFen);
+  const totals = { redLost: 0, blackLost: 0 };
+  for (const side of ['red', 'black']) {
+    const groups = pieces.filter((p) => p.red === (side === 'red'));
+    totals[side + 'Lost'] = groups.reduce((sum, p) => sum + p.count, 0);
+    const row = container?.querySelector(`.capture-row[data-side="${side}"]`);
+    const list = row?.querySelector('.capture-pieces');
+    if (!list) continue;
+    list.replaceChildren();
+    if (!groups.length) {
+      const empty = document.createElement('span');
+      empty.className = 'capture-empty';
+      empty.textContent = '尚無';
+      list.append(empty);
+      continue;
+    }
+    for (const piece of groups) {
+      const token = document.createElement('span');
+      token.className = 'captured-piece ' + side;
+      const glyph = document.createElement('span');
+      glyph.className = 'captured-glyph';
+      glyph.textContent = piece.char;
+      token.append(glyph);
+      if (piece.count > 1) {
+        const count = document.createElement('span');
+        count.className = 'captured-count';
+        count.textContent = `×${piece.count}`;
+        token.append(count);
+      }
+      list.append(token);
+    }
+  }
+  return totals;
+}
+
+export function announceXiangqiCapture(feedback, victim) {
+  if (!feedback || !victim) return;
+  feedback.dataset.captureSide = victim.red ? 'red' : 'black';
+  feedback.textContent = `${victim.red ? '紅' : '黑'}方${victim.char}被吃`;
 }

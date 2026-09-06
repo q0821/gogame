@@ -34,18 +34,11 @@ let _bgCacheKey = '';
 // every draw tick.
 let _lastCanvasKey = '';
 
-// ——— 落子 scale-in / 提子淡出動畫 ———
-// 事件觸發才跑：偵測到 state.lastMove 變動（新落子）或棋子從盤面消失（被提）時各自
-// 起一段短動畫，rAF 只在動畫進行中才被排程（透過 deps.scheduleRedraw 借用呼叫端既有的
-// 重繪節流），動畫結束即不再排程，靜止時無常駐 loop。prefers-reduced-motion 時完全跳過，
-// 直接呈現終態（不畫任何過場）。
+// Transient effects originate only from an accepted move, never a rendered-board diff.
 const PLACE_ANIM_MS = 150;
-const CAPTURE_FADE_MS = 220;
-let _placeAnimKey = null;   // `${x},${y}` 最近一次觸發動畫的 lastMove（避免同一手重複觸發）
-let _placeAnimStart = 0;
-let _placeAnimRunning = false;
-let _prevBoardFlat = null;  // 上次繪製時的盤面快照（扁平陣列），用來偵測被提走的子
-let _captureFade = null;    // { stones: [{x,y,color}], start }
+const CAPTURE_ANIM_MS = 240;
+let _placeAnim = null; // { x, y, start }
+let _captureAnim = null; // { stones: [[row,col]], color, start }
 const _easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
 
 function _layoutKey(deps, state) {
@@ -305,56 +298,40 @@ export function drawStone(deps, x, y, color, isDead, scale = 1, alpha = 1) {
   }
 }
 
-/**
- * 偵測落子（lastMove 變動）與提子（棋子從盤面消失），起 scale-in / 淡出動畫。
- * 事件觸發才寫入動畫狀態；prefers-reduced-motion 時直接跳過，只更新比對基準。
- */
-function _detectBoardChanges(state) {
-  const size = state.size;
-  const flat = new Array(size * size);
-  for (let x = 0; x < size; x++) {
-    for (let y = 0; y < size; y++) flat[x * size + y] = state.displayBoard[x][y];
-  }
-
-  const reduceMotion = prefersReducedMotion();
-  const sameSize = _prevBoardFlat && _prevBoardFlat.length === flat.length;
-
-  if (!reduceMotion && sameSize) {
-    // 提子：上次有子、這次變空 → 淡出
-    const removed = [];
-    for (let i = 0; i < flat.length; i++) {
-      if (_prevBoardFlat[i] !== EMPTY && flat[i] === EMPTY) {
-        removed.push({ x: Math.floor(i / size), y: i % size, color: _prevBoardFlat[i] });
-      }
+export function clearMoveFeedback(clearAnnouncement = true) {
+  _placeAnim = null;
+  _captureAnim = null;
+  if (clearAnnouncement) {
+    const feedback = document.getElementById('goCaptureFeedback');
+    if (feedback) {
+      feedback.textContent = '';
+      feedback.removeAttribute('data-capture-side');
     }
-    if (removed.length > 0) _captureFade = { stones: removed, start: performance.now() };
   }
+}
 
-  // 落子：lastMove 座標變動且該點現在有子 → scale-in
-  if (state.lastMove) {
-    const [lx, ly] = state.lastMove;
-    const key = `${lx},${ly}`;
-    if (key !== _placeAnimKey) {
-      _placeAnimKey = key;
-      if (!reduceMotion && state.displayBoard[lx] && state.displayBoard[lx][ly] !== EMPTY) {
-        _placeAnimStart = performance.now();
-        _placeAnimRunning = true;
-      } else {
-        _placeAnimRunning = false;
-      }
+export function beginMoveFeedback(x, y, player, capturedStones, moveNumber) {
+  clearMoveFeedback();
+  if (capturedStones?.length) {
+    const feedback = document.getElementById('goCaptureFeedback');
+    if (feedback) {
+      feedback.textContent = `第 ${moveNumber} 手 · ${player === BLACK ? '黑' : '白'}方提 ${capturedStones.length} 子`;
+      feedback.dataset.captureSide = player === BLACK ? 'black' : 'white';
     }
-  } else {
-    _placeAnimKey = null;
-    _placeAnimRunning = false;
   }
-
-  _prevBoardFlat = flat;
+  if (prefersReducedMotion()) return;
+  const start = performance.now();
+  _placeAnim = { x, y, start };
+  if (capturedStones?.length) {
+    _captureAnim = { stones: capturedStones, color: player === BLACK ? WHITE : BLACK, start };
+  }
 }
 
 export function drawBoard(deps, state) {
   // ——— Dirty-rect: only resize when the viewport or board size changed ———
   const layoutKey = _layoutKey(deps, state);
   if (layoutKey !== _lastCanvasKey) {
+    if (_lastCanvasKey) clearMoveFeedback(false);
     deps.cellSize = resizeCanvas(deps, state);
     _lastCanvasKey = layoutKey;
     // Invalidate background cache whenever layout changes
@@ -362,7 +339,7 @@ export function drawBoard(deps, state) {
     _bgCacheKey = '';
   }
 
-  _detectBoardChanges(state);
+  if (state.isReviewing || state.isScoring || state.gameOver || prefersReducedMotion()) clearMoveFeedback(false);
   const now = performance.now();
 
   const ctx = deps.ctx;
@@ -405,16 +382,21 @@ export function drawBoard(deps, state) {
     }
   }
 
-  // 提子淡出：畫已從盤面消失、動畫尚未結束的子（見 _detectBoardChanges）
+  // Removed stones lift slightly from the wood, then shrink and fade together.
   let captureAnimActive = false;
-  if (_captureFade) {
-    const elapsed = now - _captureFade.start;
-    if (elapsed < CAPTURE_FADE_MS) {
-      const alpha = 1 - elapsed / CAPTURE_FADE_MS;
-      for (const s of _captureFade.stones) drawStone(deps, s.x, s.y, s.color, false, 1, alpha);
+  if (_captureAnim) {
+    const t = Math.min(1, (now - _captureAnim.start) / CAPTURE_ANIM_MS);
+    if (t < 1) {
+      const lift = 1 - Math.pow(1 - t, 3);
+      ctx.save();
+      ctx.translate(0, -deps.cellSize * 0.18 * lift);
+      for (const [x, y] of _captureAnim.stones) {
+        drawStone(deps, x, y, _captureAnim.color, false, 1 - 0.3 * lift, 1 - t * t);
+      }
+      ctx.restore();
       captureAnimActive = true;
     } else {
-      _captureFade = null;
+      _captureAnim = null;
     }
   }
 
@@ -423,13 +405,13 @@ export function drawBoard(deps, state) {
     for (let y = 0; y < state.size; y++) {
       if (state.displayBoard[x][y] === EMPTY) continue;
       let scale = 1;
-      if (_placeAnimRunning && state.lastMove && state.lastMove[0] === x && state.lastMove[1] === y) {
-        const elapsed = now - _placeAnimStart;
+      if (_placeAnim && _placeAnim.x === x && _placeAnim.y === y) {
+        const elapsed = now - _placeAnim.start;
         if (elapsed < PLACE_ANIM_MS) {
           scale = Math.max(0.05, _easeOutBack(Math.min(1, elapsed / PLACE_ANIM_MS)));
           placeAnimActive = true;
         } else {
-          _placeAnimRunning = false;
+          _placeAnim = null;
         }
       }
       drawStone(deps, x, y, state.displayBoard[x][y], state.deadStones.has(x * state.size + y), scale);
@@ -438,7 +420,7 @@ export function drawBoard(deps, state) {
 
   // 動畫進行中才排下一幀（借用呼叫端既有的重繪節流），靜止時不留常駐 rAF loop。
   if ((placeAnimActive || captureAnimActive) && deps.scheduleRedraw) {
-    requestAnimationFrame(() => deps.scheduleRedraw());
+    deps.scheduleRedraw();
   }
 
   if (state.emotionEnabled && !state.isScoring) {
@@ -680,5 +662,5 @@ export const GoUI = {
   updateHUD, setStatus, getStatusMessage, syncStatus, updateReviewInfo,
   updateReviewAnalysisInfo, drawWinrateGraph,
   updateScoringDisplay,
-  resizeCanvas, drawStone, drawBoard, showBoardToast
+  resizeCanvas, drawStone, drawBoard, showBoardToast, beginMoveFeedback, clearMoveFeedback
 };

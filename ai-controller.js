@@ -6,13 +6,14 @@
 import * as KataGo from './katago-service.js';
 import { levelConfig, pickMove } from './adaptive-difficulty.js';
 import { isAnalysisRequestCurrent } from './position-estimate.js';
+import { inBounds, tryPlaceStone } from './rules.js';
 
 export function makeAiController(app) {
   // 用 KataGo 求一手，依自適應等級做隨機弱化。回傳 {x,y}|{pass:true}。
   async function katagoMove() {
     await KataGo.ensureReady(app.setStatus);
     const cfg = levelConfig(app.aiLevel);
-    const cands = await KataGo.genmoveCandidates({
+    const position = {
       board: app.board,
       size: app.size,
       currentPlayer: app.currentPlayer,
@@ -20,9 +21,19 @@ export function makeAiController(app) {
       komi: app.komi,
       gameRules: app.gameRules,
       onStatus: app.setStatus,
-    }, { visits: cfg.visits });
+      koPoint: app.koPoint,
+    };
+    const cands = await KataGo.genmoveCandidates(position, { visits: cfg.visits });
     if (!cands.length) return { pass: true };
-    const m = pickMove(cands, app.aiLevel);
+    // 引擎候選也須遵守本局規則；弱化挑手不可選到劫、自殺或已佔位置。
+    const legal = cands.filter(m => m.pass || (
+      Number.isInteger(m.x) && Number.isInteger(m.y)
+      && inBounds(position.size, m.x, m.y)
+      && tryPlaceStone(position.board, position.size, m.x, m.y,
+        position.currentPlayer, position.koPoint).valid
+    ));
+    if (!legal.length) throw new Error('AI 回傳的候選手皆為禁著點');
+    const m = pickMove(legal, app.aiLevel);
     if (!m || m.pass) return { pass: true };
     return { x: m.x, y: m.y };
   }
@@ -103,25 +114,24 @@ export function makeAiController(app) {
         }
       }
       if (lastErr) throw lastErr;
-      recoverAttempts = 0; // 成功取得一手，恢復計數歸零
 
       const remaining = minThinkMs - (Date.now() - thinkStart);
       if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
 
+      if (!isAnalysisRequestCurrent(app, requestBoard, requestMoveCount, requestPlayer)) return;
       app.setAIThinking(false);
       app.updateUI();
 
-      // 守門必須在落子／虛手「之前」。原本只有落子之後的 `if (!app.gameOver ...)`，
-      // 對「這一手該不該落」毫無作用。
-      if (!isAnalysisRequestCurrent(app, requestBoard, requestMoveCount, requestPlayer)) return;
-
-      if (move && !move.pass) app.placeStone(move.x, move.y);
-      else app.doPass();
+      if (move && !move.pass) {
+        if (!app.placeStone(move.x, move.y)) throw new Error('AI 落子被本局規則拒絕');
+      } else app.doPass();
+      recoverAttempts = 0; // 實際落子成功才算恢復，不能只以取得候選手判定。
 
       if (!app.gameOver && !app.isAIThinking) {
         app.updateUI();
       }
     } catch (err) {
+      if (!isAnalysisRequestCurrent(app, requestBoard, requestMoveCount, requestPlayer)) return;
       console.error('AI move failed after retries:', err);
       // 重置引擎，讓後續重試／開始新遊戲能重建乾淨 worker 恢復，毋需整頁重整。
       try { KataGo.reset(); } catch { /* noop */ }

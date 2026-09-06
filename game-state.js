@@ -226,7 +226,7 @@ function buildUndoEntry(current) {
 
 export function applyMove(x, y) {
   const current = ensureState();
-  const result = tryPlaceStone(current.board, current.size, x, y, current.currentPlayer, current.koPoint);
+  const result = tryPlaceStone(current.board, current.size, x, y, current.currentPlayer, current.koPoint, true);
   if (!result.valid) return { ok: false, reason: result.reason };
 
   current.boardHistory.push(buildUndoEntry(current));
@@ -238,7 +238,7 @@ export function applyMove(x, y) {
   current.moveHistory.push({ x, y, player: current.currentPlayer, captured: result.captured });
   current.currentPlayer = opponent(current.currentPlayer);
 
-  return { ok: true, captured: result.captured };
+  return { ok: true, captured: result.captured, capturedStones: result.capturedStones };
 }
 
 export function applyPass() {

@@ -7,8 +7,7 @@ import * as Game from './xiangqi-game.js';
 import * as Engine from './xiangqi-engine.js';
 import * as Review from './xiangqi-review.js';
 import * as Adaptive from './adaptive-chess.js';
-import { resizeXiangqiCanvas, drawXiangqi } from './xiangqi-ui.js';
-import { prefersReducedMotion } from './motion.js';
+import { resizeXiangqiCanvas, drawXiangqi, animateXiangqiMove, renderCapturedPieces, announceXiangqiCapture } from './xiangqi-ui.js';
 import { loadSfxPack, playSfx, playVoice } from './audio-manager.js';
 import { renderAudioControls } from './audio-settings-ui.js';
 import { recordGame, totals, formatRecord, loadStats, saveStats } from './stats.js';
@@ -29,6 +28,9 @@ let aiBusy = false;        // AI 思考中
 let moving = false;        // 棋子移動動畫中（鎖操作避免競態）
 let gameOver = false;
 let boardReady = false;
+let generation = 0;
+let animation = null;
+let initialFen = '';
 
 // ——— 建議走法（AI 建議按鈕，教學用途，固定高強度）———
 let hintMove = null;        // { from, to } 供 view.pv 箭頭；null=無顯示
@@ -73,29 +75,12 @@ function cacheDom() {
     audioSettings: $('xiangqiAudioSettings'),
     infobar: $('xiangqiInfobar'), turnBadge: $('xiangqiTurnBadge'), moveCount: $('xiangqiMoveCount'),
     redLost: $('xiangqiRedLost'), blackLost: $('xiangqiBlackLost'),
+    captured: $('xqCaptured'), captureFeedback: $('xqCaptureFeedback'),
   };
   dom.settings = dom.screen?.querySelector('.gomoku-settings');
   dom.statusrow = dom.screen?.querySelector('.xiangqi-statusrow');
 }
 
-// ——— 資訊列：雙方被吃子摘要（PRD §7）———
-// 直接解析 FEN 子力字元計數，和開局標準子力數比對算損失，不需引擎/game.js 額外介面。
-const XQ_INITIAL_PIECES = { K: 1, A: 2, B: 2, N: 2, R: 2, C: 2, P: 5, k: 1, a: 2, b: 2, n: 2, r: 2, c: 2, p: 5 };
-function countFenPieces(fenStr) {
-  const counts = {};
-  for (const ch of fenStr.split(' ')[0]) { if (/[a-zA-Z]/.test(ch)) counts[ch] = (counts[ch] || 0) + 1; }
-  return counts;
-}
-/** 回傳 { redLost, blackLost }：紅方被吃掉幾子、黑方被吃掉幾子。 */
-function capturedCounts() {
-  const counts = countFenPieces(Game.fen());
-  let redLost = 0, blackLost = 0;
-  for (const [ch, init] of Object.entries(XQ_INITIAL_PIECES)) {
-    const lost = Math.max(0, init - (counts[ch] || 0));
-    if (ch === ch.toUpperCase()) redLost += lost; else blackLost += lost;
-  }
-  return { redLost, blackLost };
-}
 
 function loadSettings() {
   try {
@@ -144,10 +129,6 @@ function draw(extra) {
   drawXiangqi(deps, { ...view(), ...(extra || {}) });
 }
 
-function pixelOf(sq) {
-  const { row, col } = Game.squareToRC(sq);
-  return { x: deps.padding + col * deps.cellSize, y: deps.padding + row * deps.cellSize };
-}
 
 function updateCheck() {
   if (!gameOver && Game.isCheck()) {
@@ -257,7 +238,9 @@ function setReviewUI(on) {
 }
 
 async function enterReview() {
+  const token = generation;
   await Game.ensureReady();
+  if (token !== generation || !isActive()) return;
   reviewMoves = Game.moveStackList();
   if (!reviewMoves.length) return;
   reviewFens = Game.fensForMoves(reviewMoves);
@@ -271,6 +254,8 @@ async function enterReview() {
 
 function exitReview() {
   setReviewUI(false);
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  updateInfobar();
   render();                 // 回到實際對局（結束）局面
   if (gameOver) showEnd();
 }
@@ -280,6 +265,8 @@ function reviewGoTo(ply) {
   if (dom.rvSlider) dom.rvSlider.value = String(reviewPly);
   renderReview();
   updateReviewInfo();
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  updateInfobar();
   if (reviewNodes) drawEvalGraph();
 }
 
@@ -385,22 +372,27 @@ function updateReviewInfo() {
 
 async function analyzeReview() {
   if (reviewAnalyzing || !reviewMoves.length) return;
+  const token = generation;
   reviewAnalyzing = true;
   updateHintBtn();
   if (dom.rvAnalyze) dom.rvAnalyze.disabled = true;
   try {
-    reviewNodes = await Review.analyzeGame(reviewMoves, {
+    const nodes = await Review.analyzeGame(reviewMoves, {
       movetimeMs: 400,
-      onProgress: (k, n) => { if (dom.rvInfo) dom.rvInfo.textContent = `分析中… ${k}/${n}`; },
+      onProgress: (k, n) => { if (token === generation && dom.rvInfo) dom.rvInfo.textContent = `分析中… ${k}/${n}`; },
     });
+    if (token !== generation) return;
+    reviewNodes = nodes;
     if (dom.evalGraph) dom.evalGraph.style.display = 'block';
     drawEvalGraph();
     renderReview();   // 重繪以顯示 PV 箭頭
     updateReviewInfo();
   } catch (err) {
+    if (token !== generation) return;
     if (dom.rvInfo) dom.rvInfo.textContent = 'AI 分析失敗：' + (err?.message || err);
     Engine.reset();
   } finally {
+    if (token !== generation) return;
     reviewAnalyzing = false;
     updateHintBtn();
     if (dom.rvAnalyze) dom.rvAnalyze.disabled = false;
@@ -416,7 +408,7 @@ function updateUndoBtn() {
 /** 更新「建議走法」按鈕可用狀態：AI 思考中／覆盤分析中／覆盤模式中／終局後皆不可按。 */
 function updateHintBtn() {
   if (!dom.hint) return;
-  dom.hint.disabled = !boardReady || hintBusy || aiBusy || reviewAnalyzing || reviewMode || gameOver;
+  dom.hint.disabled = !boardReady || moving || hintBusy || aiBusy || reviewAnalyzing || reviewMode || gameOver;
 }
 
 /** 更新「覆盤」按鈕可用狀態：常駐於功能列，終局前 disabled（title 已註明「終局後可用」）。 */
@@ -427,12 +419,15 @@ function updateReviewBtn() {
 
 /** 資訊列：回合徽章 + 手數 + 雙方被吃子摘要（PRD §7）。棋盤未就緒（載入中）時略過，避免呼叫 Game 拋錯。 */
 function updateInfobar() {
-  if (!boardReady || !dom.turnBadge) return;
-  const red = Game.turn();
-  dom.turnBadge.textContent = red ? '紅方' : '黑方';
-  dom.turnBadge.className = 'turn-badge ' + (red ? 'red' : 'black');
-  if (dom.moveCount) dom.moveCount.textContent = String(Game.gamePly());
-  const c = capturedCounts();
+  if (!boardReady || !initialFen) return;
+  const fen = reviewMode ? reviewFens[reviewPly] : Game.fen();
+  const red = reviewMode ? fen.split(' ')[1] === 'w' : Game.turn();
+  if (dom.turnBadge) {
+    dom.turnBadge.textContent = red ? '紅方' : '黑方';
+    dom.turnBadge.className = 'turn-badge ' + (red ? 'red' : 'black');
+  }
+  if (dom.moveCount) dom.moveCount.textContent = String(reviewMode ? reviewPly : Game.gamePly());
+  const c = renderCapturedPieces(dom.captured, fen, reviewMode ? reviewFens[0] : initialFen);
   if (dom.redLost) dom.redLost.textContent = String(c.redLost);
   if (dom.blackLost) dom.blackLost.textContent = String(c.blackLost);
 }
@@ -441,6 +436,8 @@ function updateInfobar() {
 function clearHint() {
   if (hintReq) { hintReq.cancel(); hintReq = null; }
   hintMove = null;
+  hintBusy = false;
+  if (!aiBusy) showThinking(false);
 }
 
 /** 按下「建議走法」：固定 movetime、引擎全力（不吃 adaptive 難度削弱），教學用途。 */
@@ -478,6 +475,8 @@ async function requestHint() {
 function undoMove() {
   if (aiBusy || moving || !boardReady || Game.gamePly() === 0) return;
   clearHint();
+  generation++;
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
   Game.undo();
   // pvc 若退完仍非玩家回合（剛退掉的是玩家手、輪到玩家對手）→ 再退一手回到玩家
   if (mode === 'pvc' && Game.gamePly() > 0 && Game.turn() !== playerRed) Game.undo();
@@ -513,60 +512,42 @@ function setStatus(msg) {
 
 function clearSelection() { selected = null; legalTargets = null; }
 
-const MOVE_ANIM_MS = 280;
-
-/** 以「目前（落子前）局面 + 隱藏起點格 + 浮動棋子」插值滑動。 */
-function animateMove(uci) {
-  return new Promise((resolve) => {
-    const { from: fromSq, to: toSq } = Game.splitMove(uci);
-    const fromRC = Game.squareToRC(fromSq);
-    const grid = Game.piecesGrid();
-    const piece = grid[fromRC.row] && grid[fromRC.row][fromRC.col];
-    if (!piece || prefersReducedMotion()) { resolve(); return; }
-    const p0 = pixelOf(fromSq), p1 = pixelOf(toSq);
-    let start = null, done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    const step = (ts) => {
-      if (done) return;
-      if (start === null) start = ts;
-      const t = Math.min(1, (ts - start) / MOVE_ANIM_MS);
-      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
-      drawXiangqi(deps, {
-        grid, selected: null, legalTargets: null, lastMove: null, checkRC: null,
-        rc: (sq) => Game.squareToRC(sq),
-        anim: { hideRow: fromRC.row, hideCol: fromRC.col, piece, x: p0.x + (p1.x - p0.x) * e, y: p0.y + (p1.y - p0.y) * e },
-      });
-      if (t < 1) requestAnimationFrame(step); else finish();
-    };
-    requestAnimationFrame(step);
-    // 保險：rAF 在分頁背景會暫停，timeout 確保走子流程不卡死
-    setTimeout(finish, MOVE_ANIM_MS + 400);
-  });
-}
-
 async function doMove(uci) {
+  if (!Game.legalMoves().includes(uci)) return false;
+  const token = generation;
   const parts = Game.splitMove(uci);
-  // 落子前先看目的格是否已有子：吃子 vs 落子音效判斷（走子本身不會改變盤面，可安全先查）。
-  const toRC = Game.squareToRC(parts.to);
-  const preGrid = Game.piecesGrid();
-  const captured = !!(preGrid[toRC.row] && preGrid[toRC.row][toRC.col]);
+  const grid = Game.piecesGrid();
   moving = true;
   clearSelection();
   clearHint();
-  draw();                 // 先清掉選取/合法點視覺再滑動
-  await animateMove(uci);
-  const ok = Game.move(uci);
-  moving = false;
-  if (!ok) { render(); return false; }
-  lastMove = [parts.from, parts.to];
-  playSfx(captured ? 'shogi-capture' : 'shogi-place');
-  gameOver = Game.isGameOver();
-  updateCheck();
-  setStatus();
-  render();
-  if (gameOver) onGameOver();
-  else if (Game.isCheck()) flashCheck();
-  return true;
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  updateUndoBtn();
+  updateHintBtn();
+  animation = animateXiangqiMove(deps, grid, uci, {
+    onContact(victim) {
+      if (token !== generation || !isActive() || !Game.move(uci)) return false;
+      lastMove = [parts.from, parts.to];
+      if (!document.hidden) playSfx(victim ? 'shogi-capture' : 'shogi-place');
+      announceXiangqiCapture(dom.captureFeedback, victim);
+      return true;
+    },
+    onFinish(committed) {
+      if (token !== generation) return;
+      moving = false;
+      if (committed) {
+        gameOver = Game.isGameOver();
+        updateCheck();
+      }
+      setStatus();
+      render();
+      if (committed && gameOver) onGameOver();
+      else if (committed && Game.isCheck()) flashCheck();
+    },
+  });
+  const current = animation;
+  const committed = await current.promise;
+  if (animation === current) animation = null;
+  return token === generation && committed;
 }
 
 async function onPoint(row, col) {
@@ -575,8 +556,7 @@ async function onPoint(row, col) {
   const sq = Game.rcToSquare(row, col);
   // 已選子 → 點到合法目的就走
   if (selected && legalTargets && legalTargets.includes(sq)) {
-    await doMove(selected + sq);
-    maybeAiMove();
+    if (await doMove(selected + sq)) maybeAiMove();
     return;
   }
   // 否則嘗試選取（只有「輪到的一方」且有合法手的子能選）
@@ -587,7 +567,9 @@ async function onPoint(row, col) {
 }
 
 function maybeAiMove() {
-  if (mode !== 'pvc' || gameOver || isPlayerTurn()) return;
+  if (mode !== 'pvc' || !boardReady || aiBusy || moving || gameOver || isPlayerTurn() || !isActive()) return;
+  const token = generation;
+  const fen = Game.fen();
   aiBusy = true;
   showThinking(true);
   setStatus('電腦思考中…');
@@ -596,15 +578,18 @@ function maybeAiMove() {
   const t0 = performance.now();
   (async () => {
     try {
-      const mv = await Engine.bestMove({ fen: Game.fen(), level: effectiveLevel() });
+      const mv = await Engine.bestMove({ fen, level: effectiveLevel() });
+      if (token !== generation) return;
       const rest = minDelay - (performance.now() - t0);
       if (rest > 0) await new Promise((r) => setTimeout(r, rest));
+      if (token !== generation || Game.fen() !== fen) return;
       showThinking(false);
       aiBusy = false;
       if (!isActive() || gameOver) return;
       if (mv) await doMove(mv);
       else { gameOver = true; setStatus(); onGameOver(); }
     } catch (err) {
+      if (token !== generation) return;
       showThinking(false);
       aiBusy = false;
       setStatus('AI 出錯：' + (err?.message || err) + '（請重新開始）');
@@ -614,6 +599,16 @@ function maybeAiMove() {
 }
 
 async function newGame() {
+  const token = ++generation;
+  animation?.cancel();
+  animation = null;
+  boardReady = false;
+  aiBusy = false;
+  moving = false;
+  reviewAnalyzing = false;
+  if (dom.rvAnalyze) dom.rvAnalyze.disabled = false;
+  dom.checkBanner?.classList.remove('show');
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
   if (reviewMode) setReviewUI(false);
   reviewNodes = null;
   adaptiveApplied = false;
@@ -623,7 +618,10 @@ async function newGame() {
   showThinking(false);
   setStatus('載入棋盤中…');
   await Game.ensureReady();
+  if (token !== generation || !isActive()) return;
   await Game.newGame();
+  if (token !== generation || !isActive()) return;
+  initialFen = Game.fen();
   boardReady = true;
   clearSelection();
   lastMove = null;
@@ -722,7 +720,28 @@ export async function enterXiangqiMode() {
   loadSfxPack('xiangqi');
   loadSfxPack('common');
   if (!boardReady) await newGame();
-  else render();
+  else {
+    (reviewMode ? renderReview : render)();
+    setStatus();
+    maybeAiMove();
+  }
 }
 
-export const XiangqiMode = { enterXiangqiMode };
+export function leaveXiangqiMode() {
+  animation?.cancel();
+  animation = null;
+  generation++;
+  clearHint();
+  hintBusy = false;
+  aiBusy = false;
+  moving = false;
+  reviewAnalyzing = false;
+  if (dom.rvAnalyze) dom.rvAnalyze.disabled = false;
+  dom.checkBanner?.classList.remove('show');
+  showThinking(false);
+  closeSettings();
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  if (boardReady) (reviewMode ? renderReview : render)();
+}
+
+export const XiangqiMode = { enterXiangqiMode, leaveXiangqiMode };

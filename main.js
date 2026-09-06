@@ -471,7 +471,8 @@ function buildBoardViewState() {
     captureHints,
     suggestMove,
     emotionEnabled,
-    hoverPos,
+    hoverPos: !isGameBusy() && (state.gameMode !== 'pvc' || state.currentPlayer === state.playerColor)
+      ? hoverPos : null,
     invalidFlash,
     ownership: (
       state.isReviewing
@@ -498,6 +499,15 @@ function drawBoard() {
   });
 }
 
+let _captureSoundTimer = null;
+function clearGoMoveFeedback(clearAnnouncement = true) {
+  clearTimeout(_captureSoundTimer);
+  _captureSoundTimer = null;
+  if (_drawRaf !== null) cancelAnimationFrame(_drawRaf);
+  _drawRaf = null;
+  GoUI.clearMoveFeedback(clearAnnouncement);
+}
+
 // ==================== GAME ACTIONS ====================
 function placeStone(x, y) {
   const before = getGoState();
@@ -517,14 +527,28 @@ function placeStone(x, y) {
   liveOwnership = null;
 
   const after = getGoState();
+  clearGoMoveFeedback();
+  const feedbackVisible = _activeScreen === 'play' && document.visibilityState !== 'hidden';
+  if (feedbackVisible) {
+    GoUI.beginMoveFeedback(x, y, opponent(after.currentPlayer), result.capturedStones, after.moveHistory.length);
+  }
   updateUI();
   const willRequestAI = after.gameMode === 'pvc'
     && after.currentPlayer !== after.playerColor
     && !after.gameOver;
   syncStatus(willRequestAI ? 'AI 思考中...' : '');
   drawBoard();
-  playSfx('stone-place');
-  if (result.captured > 0) setTimeout(() => playSfx('stone-capture'), 80);
+  if (feedbackVisible) {
+    playSfx('stone-place');
+    if (result.captured > 0) {
+      const capturedBoard = after.board;
+      _captureSoundTimer = setTimeout(() => {
+        _captureSoundTimer = null;
+        if (_activeScreen === 'play' && document.visibilityState !== 'hidden'
+          && getGoState().board === capturedBoard) playSfx('stone-capture');
+      }, 80);
+    }
+  }
   if (after.timerEnabled) switchTimer();
   saveGame();
   if (willRequestAI) {
@@ -542,6 +566,7 @@ function doPass() {
 
   const result = GameState.applyPass();
   if (!result.ok) return;
+  clearGoMoveFeedback();
   playSfx('pass');
 
   if (result.endedByDoublePass) {
@@ -600,6 +625,7 @@ function doUndo() {
 
   const result = GameState.undo({ gameMode: state.gameMode });
   if (!result.ok) return;
+  clearGoMoveFeedback();
   const undoState = getGoState();
   if (undoState.timerEnabled) switchTimer();
 
@@ -782,6 +808,7 @@ function deadStonesFromOwnership(ownership) {
 }
 
 async function endGameByScoring() {
+  clearGoMoveFeedback();
   stopTimer();
   saveGame();
   GameState.beginScoring();
@@ -981,6 +1008,7 @@ function cancelScoring() {
 }
 
 function endGame(title, detail, outcome) {
+  clearGoMoveFeedback();
   GameState.markGameOver();
   const state = getGoState();
   stopTimer();
@@ -1104,6 +1132,7 @@ function enterReview() {
   if (!document.getElementById('reviewToggle').checked) return;
   const result = GameState.enterReview();
   if (!result.ok) return;
+  clearGoMoveFeedback();
   document.getElementById('reviewBar').style.display = 'block';
   document.getElementById('reviewBtn').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'block';
@@ -1114,6 +1143,7 @@ function enterReview() {
 function exitReview() {
   const result = GameState.exitReview();
   if (!result.ok) return;
+  clearGoMoveFeedback();
   const state = getGoState();
   document.getElementById('reviewBar').style.display = 'none';
   document.getElementById('exitReviewBtn').style.display = 'none';
@@ -1124,6 +1154,7 @@ function exitReview() {
 function reviewGo(n) {
   const result = GameState.reviewGo(n);
   if (!result.ok) return;
+  clearGoMoveFeedback();
   updateReviewInfo();
   drawBoard();
 }
@@ -1241,6 +1272,7 @@ function onWinrateGraphClick(e) {
 function replayFromHere() {
   const state = getGoState();
   if (!state.isReviewing) return;
+  clearGoMoveFeedback();
   const cut = state.currentReviewMove;
   savedOriginalGame = GameState.getSnapshot();
   const original = savedOriginalGame;
@@ -1285,6 +1317,7 @@ function replayFromHere() {
 
 function returnToOriginal() {
   if (!savedOriginalGame) return;
+  clearGoMoveFeedback();
   GameState.restoreSnapshot(savedOriginalGame);
   // savedOriginalGame 是 replayFromHere() 在 GameState.exitReview() **之前**拍的快照，
   // isReviewing 為 true、currentReviewMove 停在分支點。還原後必須退出覆盤狀態，理由有二：
@@ -1331,6 +1364,7 @@ function newGame() {
 }
 
 function startNewGame() {
+  clearGoMoveFeedback();
   const rawSize = parseInt(document.getElementById('boardSize').value);
   const selectedSize = VALID_BOARD_SIZES.includes(rawSize) ? rawSize : 19;
 
@@ -1471,6 +1505,7 @@ function loadGame() {
     const s = JSON.parse(raw);
     if (!s || !s.board) return false;
 
+    clearGoMoveFeedback();
     GameState.restoreSnapshot(s);
     GameState.setAIThinking(false);
     cancelScheduledAIMove();   // 換局：清掉殘留排程，見 cancelScheduledAIMove()
@@ -1542,7 +1577,12 @@ function clearSave() {
 
 // Wrap doPass/doUndo to also save
 const _origDoPass = doPass;
-function doPassAndSave() { _origDoPass(); saveGame(); }
+function doPassAndSave() {
+  const state = getGoState();
+  if (state.gameMode === 'pvc' && state.currentPlayer !== state.playerColor) return;
+  _origDoPass();
+  saveGame();
+}
 const _origDoUndo = doUndo;
 function doUndoAndSave() { _origDoUndo(); saveGame(); }
 
@@ -1717,6 +1757,19 @@ Object.defineProperty(window, 'moveHistory', {
 registerEventHandlers(app);
 window.addEventListener('pagehide', checkpointTimedGame);
 document.addEventListener('visibilitychange', checkpointHiddenTimedGame);
+window.addEventListener('resize', () => {
+  clearGoMoveFeedback(false);
+  if (_activeScreen === 'play') drawBoard();
+});
+window.matchMedia?.('(prefers-reduced-motion: reduce)')?.addEventListener('change', () => {
+  clearGoMoveFeedback(false);
+  if (_activeScreen === 'play') drawBoard();
+});
+window.addEventListener('pagehide', () => clearGoMoveFeedback());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') clearGoMoveFeedback();
+  else if (_activeScreen === 'play') drawBoard();
+});
 GameState.setAiLevel(loadAiLevel());
 updateAiLevelDisplay();
 initAiLevelControls();
@@ -1962,9 +2015,13 @@ function initHomeArrows() {
 // 目前顯示中的畫面。showScreen() 是所有路由切換的唯一收斂點（只被 applyRoute() 呼叫），
 // 用它偵測「離開對弈畫面」比在 applyRoute 的每個分支各補一次可靠。
 let _activeScreen = null;
+let leaveXiangqi = null;
+let leaveXiangqiPuzzle = null;
 
 function showScreen(name) {
   if (_activeScreen === 'play' && name !== 'play') leavePlayMode();
+  if (_activeScreen === 'xiangqi' && name !== 'xiangqi') leaveXiangqi?.();
+  if (_activeScreen === 'xqpuzzle' && name !== 'xqpuzzle') leaveXiangqiPuzzle?.();
   _activeScreen = name;
   document.getElementById('homeScreen').style.display = name === 'home' ? 'flex' : 'none';
   document.getElementById('goScreen').style.display = name === 'play' ? 'flex' : 'none';
@@ -1986,6 +2043,7 @@ function showScreen(name) {
 // 停鐘後補一次 saveGame() 把定格值寫進 snapshot；不補的話要等下一次圍棋操作才會寫，
 // 期間關掉分頁就丟失定格結果。
 function leavePlayMode() {
+  clearGoMoveFeedback();
   playTimerSuspended = true;   // 必須在早退之前設，見 playTimerSuspended 宣告處
   if (!getGoState().timerEnabled) return;
   stopTimer();
@@ -2006,6 +2064,7 @@ function enterPlayMode() {
   // 中斷、只能靠下一手落子才恢復計時。終局／數目／覆盤本來就不該走鐘（進入那些狀態時
   // 已各自停鐘），不在這裡重新起鐘。
   const state = getGoState();
+  drawBoard();
   if (state.timerEnabled && !state.gameOver && !state.isScoring && !state.isReviewing) {
     startTimer();
   }
@@ -2055,7 +2114,13 @@ function applyRoute(animateTitle) {
   } else if (hash === '#xiangqi') {
     showScreen('xiangqi');
     if (title) title.style.visibility = 'visible';
-    if (!__IOS_STORE__) import('./xiangqi-mode.js').then(m => m.enterXiangqiMode()).catch(err => { console.error('模式載入失敗', err); location.hash = '#home'; });
+    if (!__IOS_STORE__) import('./xiangqi-mode.js').then(m => {
+      leaveXiangqi = m.leaveXiangqiMode;
+      if (_activeScreen === 'xiangqi') return m.enterXiangqiMode();
+    }).catch(err => {
+      console.error('模式載入失敗', err);
+      if (_activeScreen === 'xiangqi') location.hash = '#home';
+    });
   } else if (hash === '#shogi') {
     showScreen('shogi');
     if (title) title.style.visibility = 'visible';
@@ -2071,7 +2136,13 @@ function applyRoute(animateTitle) {
   } else if (hash === '#xqpuzzle') {
     showScreen('xqpuzzle');
     if (title) title.style.visibility = 'visible';
-    if (!__IOS_STORE__) import('./xiangqi-puzzle-mode.js').then(m => m.enterXiangqiPuzzleMode()).catch(err => { console.error('模式載入失敗', err); location.hash = '#home'; });
+    if (!__IOS_STORE__) import('./xiangqi-puzzle-mode.js').then(m => {
+      leaveXiangqiPuzzle = m.leaveXiangqiPuzzleMode;
+      if (_activeScreen === 'xqpuzzle') return m.enterXiangqiPuzzleMode();
+    }).catch(err => {
+      console.error('模式載入失敗', err);
+      if (_activeScreen === 'xqpuzzle') location.hash = '#home';
+    });
   } else if (hash === '#play') {
     showScreen('play');
     if (title) title.style.visibility = 'visible';
@@ -2089,7 +2160,13 @@ function applyRoute(animateTitle) {
 window.goHome = goHome;
 // 畫面切換用墨暈過渡；過渡覆蓋到中點時才換 DOM。換頁後補送一次 page_view
 // （只在 hashchange 觸發＝不含初次載入，避免與 Zaraz 自動 Pageview 雙重計數）。
-window.addEventListener('hashchange', () => playTransition(() => { applyRoute(false); trackPageview(); }));
+window.addEventListener('hashchange', () => {
+  // 離開意圖立即終止走子；不能等墨暈遮幕中點，否則舊手會在遮幕期間提交。
+  if (_activeScreen === 'xiangqi' && location.hash !== '#xiangqi') leaveXiangqi?.();
+  if (_activeScreen === 'xqpuzzle' && location.hash !== '#xqpuzzle') leaveXiangqiPuzzle?.();
+  if (_activeScreen === 'play' && location.hash !== '#play') clearGoMoveFeedback();
+  playTransition(() => { applyRoute(false); trackPageview(); });
+});
 // iOS 版：移除授權彈窗中僅適用 web 版的區塊（死活題庫、象棋殘局題庫、Fairy-Stockfish/GPL）。
 if (IOS_STORE) document.querySelectorAll('[data-web-only]').forEach(el => el.remove());
 applyRoute(true);   // 初始載入：標題暈開、不走過渡（page_view 由 Zaraz 自動 Pageview 記）

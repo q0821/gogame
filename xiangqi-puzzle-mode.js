@@ -6,7 +6,7 @@
 import * as Game from './xiangqi-game.js';
 import * as Engine from './xiangqi-engine.js';
 import * as Progress from './xiangqi-puzzle-progress.js';
-import { resizeXiangqiCanvas, drawXiangqi } from './xiangqi-ui.js';
+import { resizeXiangqiCanvas, drawXiangqi, animateXiangqiMove, renderCapturedPieces, announceXiangqiCapture } from './xiangqi-ui.js';
 import { loadSfxPack, playSfx } from './audio-manager.js';
 
 const WIN_CP = 150;     // 起始 ≥ 此值視為「求勝」題
@@ -34,6 +34,11 @@ let checkRC = null;
 let hintMove = null;     // [from,to]
 let busy = false;        // 載入/思考/判定中，鎖操作
 let finished = false;    // 本題已解出或判失敗
+let generation = 0;
+let animation = null;
+let initialFen = '';
+let puzzleReady = false;
+let pendingReply = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -43,6 +48,7 @@ function cacheDom() {
     category: $('xqpCategory'), info: $('xqpInfo'),
     prev: $('xqpPrev'), next: $('xqpNext'), random: $('xqpRandom'), reset: $('xqpReset'), hint: $('xqpHint'), home: $('xqpHome'),
     end: $('xqpEnd'), endTitle: $('xqpEndTitle'), endSub: $('xqpEndSub'), endBtn: $('xqpEndBtn'),
+    captured: $('xqpCaptured'), captureFeedback: $('xqpCaptureFeedback'),
   };
 }
 
@@ -66,36 +72,7 @@ function render() {
   const w = Math.min((dom.screen?.clientWidth || window.innerWidth) - 24, window.innerWidth - 32, 480);
   resizeXiangqiCanvas(deps, w);
   drawXiangqi(deps, view());
-}
-const PMOVE_MS = 260;
-function pixelOf(sq) { const { row, col } = Game.squareToRC(sq); return { x: deps.padding + col * deps.cellSize, y: deps.padding + row * deps.cellSize }; }
-
-/** 走子滑動動畫（落子前以目前局面 + 隱藏起點 + 浮動棋子插值）。 */
-function animateMove(uci) {
-  return new Promise((resolve) => {
-    const { from, to } = Game.splitMove(uci);
-    const fromRC = Game.squareToRC(from);
-    const grid = Game.gridFromFen(board.fen());
-    const piece = grid[fromRC.row] && grid[fromRC.row][fromRC.col];
-    if (!piece) { resolve(); return; }
-    const p0 = pixelOf(from), p1 = pixelOf(to);
-    let start = null, done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    const step = (ts) => {
-      if (done) return;
-      if (start === null) start = ts;
-      const t = Math.min(1, (ts - start) / PMOVE_MS);
-      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-      drawXiangqi(deps, {
-        grid, selected: null, legalTargets: null, lastMove: null, checkRC: null,
-        rc: (sq) => Game.squareToRC(sq),
-        anim: { hideRow: fromRC.row, hideCol: fromRC.col, piece, x: p0.x + (p1.x - p0.x) * e, y: p0.y + (p1.y - p0.y) * e },
-      });
-      if (t < 1) requestAnimationFrame(step); else finish();
-    };
-    requestAnimationFrame(step);
-    setTimeout(finish, PMOVE_MS + 400); // rAF 分頁背景會停 → 保險
-  });
+  renderCapturedPieces(dom.captured, board.fen(), initialFen);
 }
 
 function setStatus(msg) { if (dom.status) dom.status.textContent = msg; }
@@ -142,39 +119,84 @@ async function loadIndex() {
 }
 
 async function loadCategory(key) {
+  const token = invalidate();
+  busy = true;
+  hideEnd();
+  clearSel();
+  hintMove = null;
+  if (board) render();
   catKey = key;
+  puzzles = [];
   if (dom.category) dom.category.value = key;
-  puzzles = await (await fetch(`/xiangqi-puzzles/${key}.json`)).json();
-  pIdx = 0;
-  await loadPuzzle(0);
+  setStatus('載入中…');
+  try {
+    const response = await fetch(`/xiangqi-puzzles/${key}.json`);
+    const loaded = await response.json();
+    if (token !== generation) return;
+    puzzles = loaded;
+    await loadPuzzle(0);
+  } catch (err) {
+    if (token !== generation) return;
+    busy = false;
+    setStatus('題目載入失敗：' + (err?.message || err));
+  }
 }
 
 function clearSel() { selected = null; legalTargets = null; }
 
+function invalidate() {
+  generation++;
+  animation?.cancel();
+  animation = null;
+  showThinking(false);
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  return generation;
+}
+
 async function loadPuzzle(i) {
+  if (!puzzles.length) return;
+  const token = invalidate();
   busy = true;
   finished = false;
+  puzzleReady = false;
+  pendingReply = false;
   hideEnd();
   hintMove = null;
   clearSel();
   lastMove = null;
   checkRC = null;
   pIdx = Math.max(0, Math.min(puzzles.length - 1, i | 0));
+  const fen = puzzles[pIdx].fen;
   updateInfo();
   setStatus('載入中…');
   showThinking(true);
-  if (board) { try { board.delete(); } catch { /* ignore */ } board = null; }
-  board = await Game.newRawBoard(puzzles[pIdx].fen);
-  playerRed = board.turn();
-  // 定目標：分析起始局面（玩家視角）
+  if (board) { board.delete(); board = null; }
   try {
-    const a = await Engine.analyze({ fen: board.fen(), movetimeMs: 500 });
-    objective = evalCp(a) >= WIN_CP ? 'win' : 'draw';
-  } catch { objective = 'win'; }
-  showThinking(false);
-  busy = false;
-  setStatus(goalText());
-  render();
+    const loaded = await Game.newRawBoard(fen);
+    if (token !== generation) { loaded.delete(); return; }
+    board = loaded;
+    initialFen = board.fen();
+    playerRed = board.turn();
+    render();
+    try {
+      const a = await Engine.analyze({ fen: initialFen, movetimeMs: 500 });
+      if (token !== generation) return;
+      objective = evalCp(a) >= WIN_CP ? 'win' : 'draw';
+    } catch {
+      if (token !== generation) return;
+      objective = 'win';
+    }
+    showThinking(false);
+    puzzleReady = true;
+    busy = false;
+    setStatus(goalText());
+    render();
+  } catch (err) {
+    if (token !== generation) return;
+    showThinking(false);
+    busy = false;
+    setStatus('題目載入失敗：' + (err?.message || err));
+  }
 }
 
 // ——— 對局邏輯 ———
@@ -203,26 +225,47 @@ function onPoint(row, col) {
 
 function isWinResult() { const r = board.result(); return (playerRed && r === '1-0') || (!playerRed && r === '0-1'); }
 
-/** 落子前先看目的格是否已有子：吃子 vs 落子音效判斷（走子本身不會改變盤面，可安全先查）。 */
-function playMoveSound(uci) {
-  const { to } = Game.splitMove(uci);
-  const toRC = Game.squareToRC(to);
-  const grid = Game.gridFromFen(board.fen());
-  const captured = !!(grid[toRC.row] && grid[toRC.row][toRC.col]);
-  playSfx(captured ? 'shogi-capture' : 'shogi-place');
+async function movePiece(uci, token) {
+  if (token !== generation || !board.legalMoves().split(/\s+/).includes(uci)) return false;
+  const currentBoard = board;
+  const parts = Game.splitMove(uci);
+  if (dom.captureFeedback) dom.captureFeedback.textContent = '';
+  animation = animateXiangqiMove(deps, Game.gridFromFen(board.fen()), uci, {
+    onContact(victim) {
+      if (token !== generation || board !== currentBoard || !currentBoard.push(uci)) return false;
+      lastMove = [parts.from, parts.to];
+      pendingReply = currentBoard.turn() !== playerRed;
+      if (!document.hidden) playSfx(victim ? 'shogi-capture' : 'shogi-place');
+      announceXiangqiCapture(dom.captureFeedback, victim);
+      return true;
+    },
+    onFinish(committed) {
+      if (token !== generation) return;
+      if (committed) updateCheck();
+      render();
+    },
+  });
+  const current = animation;
+  const committed = await current.promise;
+  if (animation === current) animation = null;
+  return token === generation && committed;
 }
 
 async function playerMove(uci) {
+  const token = generation;
   busy = true;
   clearSel();
   hintMove = null;
-  await animateMove(uci);
-  playMoveSound(uci);
-  board.push(uci);
-  const sp = Game.splitMove(uci);
-  lastMove = [sp.from, sp.to];
-  updateCheck();
-  render();
+  if (!await movePiece(uci, token)) {
+    if (token === generation) busy = false;
+    return;
+  }
+  await completePlayerTurn(token);
+}
+
+async function completePlayerTurn(token) {
+  if (token !== generation) return;
+  busy = true;
   // 玩家直接將死 → 解出
   if (board.isGameOver()) {
     const win = isWinResult();
@@ -231,10 +274,12 @@ async function playerMove(uci) {
     showEnd(win, win ? goalLabelDone() : '本題結束');
     return;
   }
+  if (!pendingReply) { busy = false; setStatus(goalText()); return; }
   // 判定 + 取防守手（一次 analyze 兼得）
   showThinking(true); setStatus('電腦思考中…');
   try {
     const a = await Engine.analyze({ fen: board.fen(), movetimeMs: 600 });
+    if (token !== generation) return;
     const playerEval = -evalCp(a);      // a 為對手視角 → 取負為玩家視角
     showThinking(false);
     if (objective === 'win' && playerEval < FAIL_CP) {
@@ -251,12 +296,10 @@ async function playerMove(uci) {
     }
     // 引擎防守（用 analyze 的最佳手＝全強度）
     if (a.bestmove) {
-      await animateMove(a.bestmove);
-      playMoveSound(a.bestmove);
-      board.push(a.bestmove);
-      const d = Game.splitMove(a.bestmove);
-      lastMove = [d.from, d.to];
-      updateCheck();
+      if (!await movePiece(a.bestmove, token)) {
+        if (token === generation) busy = false;
+        return;
+      }
     }
     busy = false;
     if (board.isGameOver()) {
@@ -269,6 +312,7 @@ async function playerMove(uci) {
     setStatus(goalText());
     render();
   } catch (err) {
+    if (token !== generation) return;
     showThinking(false); busy = false;
     setStatus('AI 出錯：' + (err?.message || err));
     Engine.reset();
@@ -279,13 +323,18 @@ function goalLabelDone() { return objective === 'win' ? '成功求勝' : '成功
 
 async function showHint() {
   if (busy || finished || !board || board.turn() !== playerRed) return;
+  const token = generation;
   busy = true; showThinking(true); setStatus('提示計算中…');
   try {
     const a = await Engine.analyze({ fen: board.fen(), movetimeMs: 600 });
+    if (token !== generation) return;
     showThinking(false); busy = false;
     if (a.bestmove) { const m = Game.splitMove(a.bestmove); hintMove = [m.from, m.to]; setStatus('提示：藍色箭頭為建議走法'); render(); }
     else setStatus(goalText());
-  } catch { showThinking(false); busy = false; setStatus(goalText()); }
+  } catch {
+    if (token !== generation) return;
+    showThinking(false); busy = false; setStatus(goalText());
+  }
 }
 
 // ——— 事件 ———
@@ -308,10 +357,10 @@ function wireEvents() {
 
   dom.home?.addEventListener('click', () => { location.hash = '#home'; });
   dom.category?.addEventListener('change', () => loadCategory(dom.category.value));
-  dom.prev?.addEventListener('click', () => { if (!busy && pIdx > 0) loadPuzzle(pIdx - 1); });
-  dom.next?.addEventListener('click', () => { if (!busy && pIdx < puzzles.length - 1) loadPuzzle(pIdx + 1); });
-  dom.random?.addEventListener('click', () => { if (!busy && puzzles.length) loadPuzzle(Math.floor((performance.now() * 7919) % puzzles.length)); });
-  dom.reset?.addEventListener('click', () => { if (!busy) loadPuzzle(pIdx); });
+  dom.prev?.addEventListener('click', () => { if (pIdx > 0) loadPuzzle(pIdx - 1); });
+  dom.next?.addEventListener('click', () => { if (pIdx < puzzles.length - 1) loadPuzzle(pIdx + 1); });
+  dom.random?.addEventListener('click', () => { if (puzzles.length) loadPuzzle(Math.floor((performance.now() * 7919) % puzzles.length)); });
+  dom.reset?.addEventListener('click', () => { if (puzzles.length) loadPuzzle(pIdx); else if (catKey) loadCategory(catKey); });
   dom.hint?.addEventListener('click', () => showHint());
   dom.endBtn?.addEventListener('click', () => {
     const ok = dom.end._ok;
@@ -325,18 +374,31 @@ function wireEvents() {
 // ——— 進入 ———
 
 export async function enterXiangqiPuzzleMode() {
-  loadSfxPack('xiangqi'); // 殘局沿用象棋落子/吃子音效包，未另立 pack
+  loadSfxPack('xiangqi');
   loadSfxPack('common');
   if (!initialized) {
     cacheDom();
     deps = { canvas: dom.canvas, ctx: dom.canvas.getContext('2d'), padding: 22, cellSize: 32 };
     wireEvents();
-    await loadIndex();
-    await loadCategory(index[0].key);
     initialized = true;
-  } else {
+  }
+  const token = generation;
+  await loadIndex();
+  if (token !== generation) return;
+  if (!puzzles.length) await loadCategory(catKey || index[0].key);
+  else if (!board || !puzzleReady) await loadPuzzle(pIdx);
+  else {
     render();
+    if (!finished) await completePlayerTurn(token);
   }
 }
 
-export const XiangqiPuzzleMode = { enterXiangqiPuzzleMode };
+export function leaveXiangqiPuzzleMode() {
+  invalidate();
+  busy = false;
+  clearSel();
+  hintMove = null;
+  if (board) { updateCheck(); render(); }
+}
+
+export const XiangqiPuzzleMode = { enterXiangqiPuzzleMode, leaveXiangqiPuzzleMode };

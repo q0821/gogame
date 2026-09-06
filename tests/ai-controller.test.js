@@ -24,7 +24,7 @@ function makeApp(overrides = {}) {
     currentPlayer: 2,   // WHITE：非玩家色，AI 該下
     playerColor: 1,     // BLACK
     aiLevel: 5,
-    board: [],
+    board: Array.from({ length: 9 }, () => Array(9).fill(0)),
     size: 9,
     moveHistory: [],
     komi: 7.5,

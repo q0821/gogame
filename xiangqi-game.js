@@ -117,6 +117,26 @@ export function gridFromFen(fenStr) {
 /** 目前局面的棋子格陣。 */
 export function piecesGrid() { return gridFromFen(fen()); }
 
+/** 本局起始子力減目前子力；殘局不把開題前缺少的子算成被吃。 */
+export function capturedPieces(fenStr, initialFen) {
+  const remaining = new Map();
+  for (const row of gridFromFen(fenStr)) for (const piece of row) {
+    if (!piece) continue;
+    const key = `${piece.red}:${piece.char}`;
+    remaining.set(key, (remaining.get(key) || 0) + 1);
+  }
+  const lost = new Map();
+  for (const row of gridFromFen(initialFen)) for (const piece of row) {
+    if (!piece) continue;
+    const key = `${piece.red}:${piece.char}`;
+    const count = remaining.get(key) || 0;
+    if (count) remaining.set(key, count - 1);
+    else if (lost.has(key)) lost.get(key).count++;
+    else lost.set(key, { ...piece, count: 1 });
+  }
+  return [...lost.values()];
+}
+
 // ——— 覆盤用 ———
 
 /** 整局已走的 UCI 著法陣列。 */

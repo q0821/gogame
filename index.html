@@ -96,14 +96,15 @@
   <!-- 資訊列：回合 + 提子 + 手數 + 計時（永遠可見；.game-infobar 為六棋共用樣式） -->
   <div class="game-infobar go-infobar" id="goInfobar">
     <div class="turn-badge black" id="mobileTurn">黑方</div>
-    <div class="info-item"><span class="stone-dot black" aria-label="黑"></span> <span id="mobileBlackCap">0</span></div>
-    <div class="info-item"><span class="stone-dot white" aria-label="白"></span> <span id="mobileWhiteCap">0</span></div>
+    <div class="info-item go-capture-total"><span class="stone-dot black" aria-hidden="true"></span> 黑方提子 <span id="mobileBlackCap">0</span></div>
+    <div class="info-item go-capture-total"><span class="stone-dot white" aria-hidden="true"></span> 白方提子 <span id="mobileWhiteCap">0</span></div>
     <div class="info-item">第 <span id="mobileMoveCount">0</span> 手</div>
     <div class="go-timers" id="timerArea" style="display:none">
       <span class="go-timer"><span class="stone-dot black"></span> <span id="blackTimer">10:00</span></span>
       <span class="go-timer"><span class="stone-dot white"></span> <span id="whiteTimer">10:00</span></span>
     </div>
   </div>
+  <div id="goCaptureFeedback" class="capture-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- 棋盤 -->
   <div class="board-wrap go-board-wrap">
@@ -494,6 +495,17 @@
       </div>
     </div>
   </div>
+  <section id="xqCaptured" class="captured-inventory" aria-label="被吃棋子">
+    <div class="capture-row" data-side="red">
+      <span class="capture-label">紅方被吃</span>
+      <div class="capture-pieces"><span class="capture-empty">尚無</span></div>
+    </div>
+    <div class="capture-row" data-side="black">
+      <span class="capture-label">黑方被吃</span>
+      <div class="capture-pieces"><span class="capture-empty">尚無</span></div>
+    </div>
+  </section>
+  <div id="xqCaptureFeedback" class="capture-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="xiangqi-statusrow">
     <span class="gomoku-status" id="xiangqiStatus" role="status" aria-live="polite"></span>
     <span class="xiangqi-spinner" id="xiangqiThinking" style="display:none" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -668,6 +680,17 @@
       </div>
     </div>
   </div>
+  <section id="xqpCaptured" class="captured-inventory" aria-label="本題被吃棋子">
+    <div class="capture-row" data-side="red">
+      <span class="capture-label">紅方被吃</span>
+      <div class="capture-pieces"><span class="capture-empty">尚無</span></div>
+    </div>
+    <div class="capture-row" data-side="black">
+      <span class="capture-label">黑方被吃</span>
+      <div class="capture-pieces"><span class="capture-empty">尚無</span></div>
+    </div>
+  </section>
+  <div id="xqpCaptureFeedback" class="capture-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
   <div class="xiangqi-statusrow">
     <span class="gomoku-status" id="xqpStatus" role="status" aria-live="polite"></span>
     <span class="xiangqi-spinner" id="xqpThinking" style="display:none" aria-hidden="true"><i></i><i></i><i></i></span>

@@ -439,12 +439,14 @@ describe('圍棋主流程狀態生命週期', () => {
       const sandbox = sandboxWithMainLifecycle({ useRealTimer: true });
       startPvcGame(sandbox, { playerColor });
 
-      sandbox.ctx.doPass(); // 黑虛手（人類執黑時是人類；人類執白時是 AI）
+      if (playerColor === 1) sandbox.ctx.doPass();
+      else sandbox.app.doPass(); // 人類執白時，由 AI 入口替黑方虛手。
       // 人類執黑時，上一手虛手後會排一次 AI 求手，該排程窗口內 isGameBusy() 為 true，
       // 第二次 doPass() 會被擋掉（正是排程旗標要擋的事）。先把排程跑掉，模擬「AI 回合
       // 真的來了」，第二手虛手才是合法的下一步。
       sandbox.clock.runTimeouts();
-      sandbox.ctx.doPass(); // 白虛手 → 雙虛手進入數目
+      if (playerColor === 2) sandbox.ctx.doPass();
+      else sandbox.app.doPass(); // 白方為 AI 時不可借用玩家按鈕入口。
       expect(sandbox.GameState.getState().isScoring).toBe(true);
       sandbox.clock.runTimeouts();
       sandbox.requestAIMove.mockClear();

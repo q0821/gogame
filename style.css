@@ -1614,6 +1614,78 @@ h1.brush-title::after { display: none; }
 .go-timers { display: flex; gap: 12px; align-items: center; }
 .go-timer { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* 吃子資訊：木子明細不作互動控件，保持棋盤為視覺中心。 */
+.go-infobar .go-capture-total { color: var(--text-dim); }
+.go-capture-total > span:last-child {
+  display: inline-block;
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+}
+.capture-feedback {
+  min-height: 1.25rem;
+  width: 100%;
+  max-width: 500px;
+  color: var(--gold-mid);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.captured-inventory {
+  width: 100%;
+  max-width: 480px;
+  padding: 0.375rem 0.625rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.capture-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2rem;
+}
+.capture-label {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+.capture-pieces {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.625rem;
+  min-width: 0;
+}
+.capture-empty {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+.captured-piece {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+.captured-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: #ebd7a5;
+  box-shadow: 0 2px 2px rgba(60, 46, 24, 0.16);
+  font-size: 1.0625rem;
+  line-height: 1;
+}
+.captured-piece.red .captured-glyph { color: var(--seal); }
+.captured-count {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 棋盤容器（沿用 .board-wrap：position:relative + inline-block） */
 .go-board-wrap { margin: 0 auto; }
 
