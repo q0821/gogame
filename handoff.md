@@ -1,7 +1,21 @@
-# 圍棋單一狀態來源重構 Handoff
+# 弈樂交接紀錄
 
-更新時間：2026-07-29
-目前狀態：**已完成並合併到 `main`，已 push。** 本文件保留作為 follow-up 清單與驗證紀錄。
+更新時間：2026-09-07（台灣時間）
+
+## iOS 1.0.7（7）送審完成 — 2026-09-07
+
+- App Store Connect 的弈樂（App ID `6787857577`，Bundle ID `com.yilegames.app`）已提交 **1.0.7（build 7）**。送出後重新載入，確認為「正在等待審查」。
+- 沿用「手動發佈此版本」；核准後仍需另行發布。審核狀態以 [App Store Connect](https://appstoreconnect.apple.com/apps/6787857577/distribution/ios/version/inflight) 即時顯示為準。
+- 原 1.0.6 僅為尚未送出的審核草稿；已更新為 1.0.7，移除舊草稿項目、將 build 6 換成 build 7 後重新提交。
+- 「此版本的新增功能」已保存：提子動畫／提子數提示、AI 禁著點與錯色預覽、玩家虛手權限、動畫與舊求手生命週期；並保留尚未發布的 1.0.6 覆盤勝率、計時與棋局狀態同步修正。未宣稱 iOS 有象棋功能。
+- 本機提交：`1ac2a31`（吃子效果與 AI 修正）、`c071cca`（iOS 版本與 changelog）。本次尚未 Git push；App Store Connect 上傳、送審與 Git 推送為不同操作。
+- 驗證：27 組／519 個測試通過、瀏覽器非法 AI 候選手情境通過、iOS 資產合規檢查通過、Release 封存與簽章驗證通過、Apple 回覆 `Upload succeeded`，之後於商店完成送審。
+- 封存：`~/Library/Developer/Xcode/Archives/2026-09-07/Gogame-1.0.7-7.xcarchive`。
+- 本機編譯問題已處理：`pod install` 同步 Manifest.lock；依賴版本不變，CocoaPods 記錄由 1.16.2 更新為 1.17.0。匯出時 Apple rsync 與 Homebrew rsync 參數不相容，使用 `PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin` 執行 `xcodebuild -exportArchive` 即成功。
+
+## 歷史交接：圍棋單一狀態來源重構
+
+以下為 2026-07-29 的歷史紀錄；其中 HEAD、分支與 push 狀態僅描述當時情況。該重構已完成並合併到 `main`、已 push。
 
 ## 目標
 
