@@ -1,4 +1,4 @@
-const VERSION = 'v2026.08.31-fec2dec';
+const VERSION = 'v2026.09.06-1ac2a31';
 const CACHE_NAME = `gogame-${VERSION}`;
 // 預快取只列「build 產物中必定存在的穩定路徑」。
 // ⚠️ 歷史教訓（2026-07）：舊清單列了 rules.js/game-state.js/ui.js 等原始檔路徑，
